@@ -74,7 +74,7 @@ end
 
 local ps = PS:new('out.ps')
 function lua2ps(ast, locals)
-  trace(string.format('visiting %s node @ %d', ast.tag, ast.pos))
+  trace(string.format('visiting %s node @ %s', tostring(ast.tag), tostring(ast.pos)))
 
   -- Block node
   if ast.tag == 'Block' then
@@ -90,7 +90,10 @@ function lua2ps(ast, locals)
 
   -- Function node
   elseif ast.tag == 'Function' then
-    local numArgs = 0
+    local numArgs = 0 -- number of arguments for our function
+    -- First we need to tell our emitter, which is responsible for monitoring
+    -- our stack frame, that we're beginning a new function.
+    ps:openFunction()
     -- We need to create new locals for function arguments. We should find
     -- the names of arguments in ast[1]
     if (ast[1].tag == 'NameList') then
@@ -100,7 +103,8 @@ function lua2ps(ast, locals)
         assert(argumentIdNode.tag == 'Id')
         -- Record new local
         locals[argumentIdNode[1]] = {
-          indexFromBottom = iArgumentIdNode - 1 -- -1 because stackDepth starts at 0
+          -- These should count downward from numArgs-1 to 0
+          indexFromBottom = numArgs - iArgumentIdNode
         }
         trace(string.format('adding local "%s"', argumentIdNode[1]))
       end
@@ -108,7 +112,7 @@ function lua2ps(ast, locals)
     -- that we have zero arguments.
     else assert(ast[1].tag == nil)
     end
-    dumpLocals(locals)
+    --dumpLocals(locals)
     -- Emit function introduction, which fits the callee's arguments into
     -- our locals, and sets the groundwork for varargs.
     -- TODO full support for varargs!
@@ -116,6 +120,13 @@ function lua2ps(ast, locals)
     -- ast[2] should be our function body
     -- Descend into function body
     lua2ps(ast[2], locals)
+    -- Without further analysis, we don't know if control flow might reach the
+    -- very end of our function, so we'll make sure to clean up the stack frame
+    -- here and return from the function. Since we only support *exactly* one
+    -- function return value, we'll return nil, or null in PostScript.
+    lua2ps({tag='Return', {tag='Nil'}}, locals)
+    -- Now we can tell our emitter that we're done defining this function.
+    ps:closeFunction()
 
   -- Localrec node
   elseif ast.tag == 'Localrec' then
@@ -134,7 +145,7 @@ function lua2ps(ast, locals)
     -- Register the local
     assert(type(ast[1][1][1]) == 'string')
     locals[ast[1][1][1]] = {
-      indexFromBottom = ps.stackDepth
+      indexFromBottom = ps.stackDepth[1]
     }
     -- Descend into the Function node
     lua2ps(ast[2][1], locals)
@@ -160,7 +171,7 @@ function lua2ps(ast, locals)
       assert('string' == type(idNode[1]))
       trace(string.format('adding local "%s"', idNode[1]))
       locals[idNode[1]] = {
-        indexFromBottom = ps.stackDepth
+        indexFromBottom = ps.stackDepth[1]
       }
     end
     -- Evaluate rvalues and assign them to our locals!
@@ -171,7 +182,11 @@ function lua2ps(ast, locals)
     assert(#ast == 1)
     assert('number' == type(ast[1]))
     -- push number onto stack
-    ps:emit(ast[1], string.format('%% pos=%d', ast.pos))
+    ps:emit(ast[1], string.format('%% pos=%s', tostring(ast.pos)))
+
+  -- Nil node
+  elseif ast.tag == 'Nil' then
+    ps:emit('null', string.format('%% pos=%s', tostring(ast.pos)))
 
   -- Op node
   elseif ast.tag == 'Op' then
@@ -195,7 +210,7 @@ function lua2ps(ast, locals)
     assert(#ast == 1)
     assert('string' == type(ast[1]))
     trace(string.format('encountering identifier "%s"', ast[1]))
-    dumpLocals(locals)
+    --dumpLocals(locals)
     -- Does identifier identify a local?
     if locals[ast[1]] ~= nil then
       -- Identifies local
@@ -221,22 +236,25 @@ function lua2ps(ast, locals)
     ps:emitFunctionReturn(1, ast.pos)
 
   -- Call node
-  elseif ast.arg == 'Call' then
+  elseif ast.tag == 'Call' then
     -- Our first child is the callee.
     assert(#ast >= 1)
     -- If our callee is only an Id node, we are calling either a local or a global
     -- function. For now, this is the only kind of call we'll support.
     assert(ast[1].tag == 'Id')
+    local calleeId = ast[1][1]
     -- First we must push a PostScript 'mark.' This is part of the current calling
     -- convention I've come up with.
-    ps:emit('mark')
+    -- XXX here i bypass ps:emit()
+    ps:write(string.format('mark %% setting up stack frame for call to %s pos=%s\n',
+      calleeId, tostring(ast.pos)))
     -- Second, we must push our arguments. To do that, we simply descend into them
     -- via lua2ps(). Currently, our calling convention (mostly implemented in the
     -- ps module) pushes arguments onto the stack in right-to-left order. XXX In
     -- contravention of Lua's behavior, right now to simplify my life, function
     -- arguments are also *evaluated* in right-to-left order!
     for iArgNode = #ast, 2, -1 do
-      lua2ps(ast[iArgNode])
+      lua2ps(ast[iArgNode], locals)
     end
     -- With our arguments on the stack, set up the function call
     if locals[calleeId] ~= nil then
@@ -254,9 +272,9 @@ end
 
 function dumpLocals(locals)
   for localName, localInfo in mpairs(locals) do
-    print(string.format('local "%s"', localName))
+    print(string.format('dump> local "%s"', localName))
     for k, v in pairs(localInfo) do
-      print(string.format('  "%s" = "%s"', tostring(k), tostring(v)))
+      print(string.format('dump>  "%s" = "%s"', tostring(k), tostring(v)))
     end
   end
 end
@@ -282,7 +300,10 @@ function doAssignments(ast, locals)
                             and ast[1][1].tag == 'Id' and ast[2][1].tag == 'Function')
   if ast[1].tag == nil then
     -- This is the "function foo() .. end" case.
-    error('not implemented')
+    assert(ast[2][1].tag == 'Function')
+    lua2ps(ast[2][1], locals)
+    -- Emit PostScript to make the assignment
+    ps:emitGlobalAssignment(ast[1][1][1])
   else
     -- To keep things simple, we'll impose some additional
     -- restrictions on ourselves. Better code in the future
