@@ -267,7 +267,51 @@ function lua2ps(ast, locals)
 
   -- Table node
   elseif ast.tag == 'Table' then
-    error('still researching')
+    -- TODO change default psDictSize?
+    local psDictSize = 128
+    if psDictSize < #ast then psDictSize = #ast end
+    -- Emit PostScript to instantiate LuaTable
+    ps:emit(psDictSize, 'luaTableNew')
+    -- Iterate over each entry in the table. I'm not 100% sure of how Lua table
+    -- literal syntax, but I think I should keep a cursor for the current insert
+    -- index, but only use it when a key isn't explicitly specified.
+    local cursor = 1
+    for iChild, child in ipairs(ast) do
+      -- dup dict on PostScript stack
+      ps:emit('dup', '% dup lua table dict')
+      -- If we have a Pair node, that means we have an explicit key
+      if child.tag == 'Pair' then
+        -- evaluate key, put on PostScript stack
+        lua2ps(child[1])
+        -- evaluate value, put on PostScript stack
+        lua2ps(child[2])
+      else
+        -- put auto table key on PostScript stack
+        ps:emit(cursor, '% auto table key')
+        cursor = cursor + 1
+        -- evaluate value, put on PostScript stack
+        lua2ps(child)
+      end
+      -- Emit table assignment
+      ps:emit('luaTableSet')
+    end
+
+  -- String node
+  elseif ast.tag == 'String' then
+    assert(#ast == 1)
+    ps:emitString(ast[1])
+
+  -- Index node
+  elseif ast.tag == 'Index' then
+    -- Index node has two children..
+    assert(#ast == 2)
+    -- ..the expression which evaluates to the table to be indexed, and the key.
+    -- First we evaluate our table expression.
+    lua2ps(ast[1], locals)
+    -- Second we evaluate our key expression.
+    lua2ps(ast[2], locals)
+    -- Finally, we emit the code to evaluate the Index operation.
+    ps:emit('luaTableGet')
 
   else error(string.format('AST node tag "%s" is unimplemented!',
     tostring(ast.tag)))
@@ -325,7 +369,23 @@ function doAssignments(ast, locals)
     -- our rvalues left-to-right.
     for iChild = #ast[1], 1, -1 do
       local child = ast[1][iChild]
-      if locals[child[1]] ~= nil then
+      if child.tag == 'Index' then
+        -- This is a table index assignment. The lvalue can be a pretty complicated
+        -- expression, such as foo[23][42] = value, and more exotic forms. The Index
+        -- node contains two children, the first is the expression which evaluates
+        -- to the table in which the assignment occurs ("table expression,") and the
+        -- second is the -- expression that evaluates to the key for our index
+        -- assignment operation.
+        -- First let's evaluate our table expression.
+        lua2ps(child[1], locals)
+        -- The table we want is now on top of the stack. Let's evaluate our key
+        -- expression now.
+        lua2ps(child[2], locals)
+        -- Rearrange the stack a bit so we can call the PostScript prologue procedure
+        -- "luaTableSet"
+        ps:emit(3, -1, 'roll', 'luaTableSet',
+          string.format('%% lua table index assignment pos=%s', tostring(child.pos)))
+      elseif locals[child[1]] ~= nil then
         assert(locals[child[1]] ~= nil)
         -- Emit local assignment
         ps:emitLocalAssignment(locals[child[1]].indexFromBottom, child[1], child.pos)

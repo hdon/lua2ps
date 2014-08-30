@@ -9,10 +9,19 @@ function PS:new(out)
   local ps = setmetatable({
     stackDepth = {0}
   , psCommands  = {
-      index     = { pop = 1 , push = 1 }
-    , mul       = { pop = 2 , push = 1 }
-    , add       = { pop = 2 , push = 1 }
-    , null      = { pop = 0 , push = 1 }
+    -- Standard PostScript commands -
+      index         = { pop = 1 , push = 1 }
+    , mul           = { pop = 2 , push = 1 }
+    , add           = { pop = 2 , push = 1 }
+    , null          = { pop = 0 , push = 1 }
+    , put           = { pop = 3 , push = 0 }
+    , dup           = { pop = 1 , push = 2 }
+    , pop           = { pop = 1 , push = 0 }
+    , roll          = { pop = 2 , push = 0 } -- TODO stack check of roll operand?
+    -- Standard lua2ps commands, from prologue.ps --
+    , luaTableNew   = { pop = 1 , push = 1 }
+    , luaTableGet   = { pop = 2 , push = 1 }
+    , luaTableSet   = { pop = 3 , push = 0 }
     }
   }, PS)
   if out ~= nil then
@@ -26,7 +35,8 @@ function PS:new(out)
     end
   end
   -- Write prologue
-  ps.out:write(readFile('prologue.ps'))
+  --ps.out:write(readFile('prologue.ps'))
+  ps.out:write('(prologue.ps) run\n')
   return ps
 end
 
@@ -203,8 +213,13 @@ function PS:emitGlobalFunctionCall(id)
   self:write(self:makeGlobalIdentifier(id), '\n')
 end
 
+function PS:emitString(s)
+  self:nudgeStackDepth(1)
+  self:write('(', s, ')') -- TODO escape!
+end
+
 function PS:close()
   trace('PS:close()')
-  self:write('pstack quit\n')
+  self:write('count 0 ne { (Non-empty stack at exit:) == pstack } if quit\n')
   if self.out ~= io.stdout then self.out:close() end
 end

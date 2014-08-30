@@ -124,3 +124,17 @@
 /luaTableLength {
   (luaLength) get
 } def
+
+% These are magic functions which can be called by Lua, but which are implemented
+% natively in PostScript! As such, they must respect the lua2ps calling conventions
+% for Lua functions.
+
+/__lua_G_print {
+  {
+    dup mark eq { pop exit } { == } ifelse
+  } loop
+} def
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%   END    OF   THE   PROLOGUE.   GENERATED   CODE  STARTS   HERE!  %%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
