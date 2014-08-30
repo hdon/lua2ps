@@ -4,9 +4,9 @@
 % coercing keys to string or anything like that.
 % But Lua tables also know their "array length," so we need to take care
 % for that, and also avoid key collisions. Rather than bend over backward
-% - luaTableNew <dict>
+% <dict-initial-size> - luaTableNew <dict>
 /luaTableNew {
-  128 dict
+  dict
   dup (luaLength) 0 put
 } def
 % <key> luaPrepareTableKey <key2> <isInteger>
@@ -124,22 +124,3 @@
 /luaTableLength {
   (luaLength) get
 } def
-
-true {
-% stack: empty!
-luaTableNew % create new lua table
-% stack: <dict>
-dup (myKey) (myValue) luaTableSet
-% stack: <dict>
-dup (myKey) luaTableGet ==
-% stack: <dict>
-dup luaTableLength ==
-% stack: <dict>
-dup 1 (myValue) luaTableSet
-% stack: <dict>
-dup luaTableLength ==
-% stack: <dict>
-(Quitting! Stack:) ==
-pstack
-quit
-} if
