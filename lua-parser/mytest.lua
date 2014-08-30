@@ -265,6 +265,10 @@ function lua2ps(ast, locals)
       ps:emitGlobalFunctionCall(calleeId)
     end
 
+  -- Table node
+  elseif ast.tag == 'Table' then
+    error('still researching')
+
   else error(string.format('AST node tag "%s" is unimplemented!',
     tostring(ast.tag)))
   end
