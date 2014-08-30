@@ -4,7 +4,7 @@
 % coercing keys to string or anything like that.
 % But Lua tables also know their "array length," so we need to take care
 % for that, and also avoid key collisions. Rather than bend over backward
-% <dict-initial-size> - luaTableNew <dict>
+% <dict-initial-size> luaTableNew <dict>
 /luaTableNew {
   dict
   dup (luaLength) 0 put
