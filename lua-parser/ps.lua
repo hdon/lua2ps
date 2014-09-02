@@ -22,6 +22,7 @@ function PS:new(out)
     , luaTableNew   = { pop = 1 , push = 1 }
     , luaTableGet   = { pop = 2 , push = 1 }
     , luaTableSet   = { pop = 3 , push = 0 }
+    , luaTableLength= { pop = 1 , push = 1 }
     }
   }, PS)
   if out ~= nil then

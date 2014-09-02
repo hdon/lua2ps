@@ -6,7 +6,10 @@ local
 , filename
 , ast
 
-filename = "test1.lua" -- "/mnt/oih/hdon/src/git/luaqrcode/qrencode.lua"
+--filename = 'test1.lua'
+--filename = "/mnt/oih/hdon/src/git/luaqrcode/qrencode.lua"
+filename = 'qrencode.lua'
+
 parser = require "lua-parser.parser"
 pp     = require "lua-parser.pp"
 
@@ -190,14 +193,26 @@ function lua2ps(ast, locals)
 
   -- Op node
   elseif ast.tag == 'Op' then
-    assert(#ast == 3)
-    lua2ps(ast[2], locals)
-    lua2ps(ast[3], locals)
-    if ast[1] == 'mul' then
-      ps:emit('mul')
-    elseif ast[1] == 'add' then
-      ps:emit('add')
-    else error("unknown lua operator")
+    assert(#ast > 0)
+    if #ast == 3 then
+      -- Binary operators
+      lua2ps(ast[2], locals)
+      lua2ps(ast[3], locals)
+      if ast[1] == 'mul' then
+        ps:emit('mul')
+      elseif ast[1] == 'add' then
+        ps:emit('add')
+      else error("unknown lua operator") end
+    elseif #ast == 2 then
+      -- Unary operators
+      if ast[1] == 'len' then
+        -- emit operand
+        lua2ps(ast[2], locals)
+        -- emit PostScript for #tbl operation
+        ps:emit('luaTableLength')
+      else error('unknown unary operator: ' .. ast[1]) end
+    else error(string.format(
+    'Known operators are binary or unary, but found "%s" operator with %d operands!', ast[1], #ast))
     end
 
   -- Id node
