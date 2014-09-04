@@ -6,9 +6,9 @@ local
 , filename
 , ast
 
---filename = 'test1.lua'
+filename = 'test1.lua'
 --filename = "/mnt/oih/hdon/src/git/luaqrcode/qrencode.lua"
-filename = 'qrencode.lua'
+--filename = 'qrencode.lua'
 
 parser = require "lua-parser.parser"
 pp     = require "lua-parser.pp"
@@ -72,40 +72,71 @@ print('writing Lua source and AST to _ast.lua')
 dumpSourceAndASTfile('_ast.lua', source, ast)
 
 function trace(...)
-  print(...)
+  local line
+  if indent > 0 then
+    line = string.rep(' ', indent)
+  else
+    line = ''
+  end
+  for i, s in ipairs({...}) do
+    if i > 1 then
+      line = line .. ' '
+    end
+    line = line .. s
+  end
+  print(line)
 end
 
+indent = -2
 local ps = PS:new('out.ps')
+-- This function recursively visits an entire Lua AST, emitting PostScript.
+-- Arguments:
+--   ast:         A syntax node
+--   locals:      The locals table
 function lua2ps(ast, locals)
+  indent = indent + 2
   trace(string.format('visiting %s node @ %s', tostring(ast.tag), tostring(ast.pos)))
+  dumpLocals(locals)
 
   -- Block node
   if ast.tag == 'Block' then
-    -- For a 'Block' i think this is the right place to save our locals
-    local newLocals = {}
-    setmetatable(newLocals, { __index = locals })
-    locals = newLocals
     -- The Block has one child for each statement
     -- Descend into those nodes
     for _, child in ipairs(ast) do
       lua2ps(child, locals)
+      -- This part would be straightforward, but we have to pop anything off
+      -- the stack the Lua code throws away. Since we have restricted functions
+      -- to exactly a single return value, and nil (null on PostScript side) is
+      -- put on the stack by a function with no return value, this means that
+      -- we specifically need to look for Call nodes that are immediate children
+      -- of any Block node, and be sure to pop their return value. I believe that
+      -- anywhere else a Call node is found, the return value is consumed and we
+      -- don't have to worry about it.
+      if child.tag == 'Call' then
+        ps:emit('pop', '% discard function call return value')
+      end
     end
 
   -- Function node
   elseif ast.tag == 'Function' then
+    assert(#ast == 2)
     local numArgs = 0 -- number of arguments for our function
     -- First we need to tell our emitter, which is responsible for monitoring
     -- our stack frame, that we're beginning a new function.
     ps:openFunction()
     -- We need to create new locals for function arguments. We should find
-    -- the names of arguments in ast[1]
+    -- the names of arguments in ast[1]. We don't put these into our own
+    -- 'locals', because that is within our parent scope, our scope is only
+    -- relevant once we descend into our Block node. 'newLocals' is nil
+    -- though, and this is what it's for, I guess.
+    local newLocals = {}
     if (ast[1].tag == 'NameList') then
       numArgs = #ast[1]
       for iArgumentIdNode, argumentIdNode in ipairs(ast[1]) do
         -- Each of these is an Id node
         assert(argumentIdNode.tag == 'Id')
         -- Record new local
-        locals[argumentIdNode[1]] = {
+        newLocals[argumentIdNode[1]] = {
           -- These should count downward from numArgs-1 to 0
           indexFromBottom = numArgs - iArgumentIdNode
         }
@@ -113,16 +144,16 @@ function lua2ps(ast, locals)
       end
     -- If ast[1] isn't our NameList, it should be a 'nil node', indicating
     -- that we have zero arguments.
-    else assert(ast[1].tag == nil)
+    else
+      assert(ast[1].tag == nil)
     end
     --dumpLocals(locals)
     -- Emit function introduction, which fits the callee's arguments into
     -- our locals, and sets the groundwork for varargs.
     -- TODO full support for varargs!
     ps:emitFunctionIntroduction(numArgs, ast.pos)
-    -- ast[2] should be our function body
     -- Descend into function body
-    lua2ps(ast[2], locals)
+    block2ps(ast[2], ast, locals, newLocals)
     -- Without further analysis, we don't know if control flow might reach the
     -- very end of our function, so we'll make sure to clean up the stack frame
     -- here and return from the function. Since we only support *exactly* one
@@ -148,7 +179,7 @@ function lua2ps(ast, locals)
     -- Register the local
     assert(type(ast[1][1][1]) == 'string')
     locals[ast[1][1][1]] = {
-      indexFromBottom = ps.stackDepth[1]
+      indexFromBottom = ps:getStackDepth()
     }
     -- Descend into the Function node
     lua2ps(ast[2][1], locals)
@@ -174,7 +205,7 @@ function lua2ps(ast, locals)
       assert('string' == type(idNode[1]))
       trace(string.format('adding local "%s"', idNode[1]))
       locals[idNode[1]] = {
-        indexFromBottom = ps.stackDepth[1]
+        indexFromBottom = ps:getStackDepth()
       }
     end
     -- Evaluate rvalues and assign them to our locals!
@@ -254,31 +285,19 @@ function lua2ps(ast, locals)
   elseif ast.tag == 'Call' then
     -- Our first child is the callee.
     assert(#ast >= 1)
-    -- If our callee is only an Id node, we are calling either a local or a global
-    -- function. For now, this is the only kind of call we'll support.
-    assert(ast[1].tag == 'Id')
+    -- Right now we only support a callee expression that is simply a single
+    -- identifier. In something like "foo[1]()" or "foo()()" the function we
+    -- are calling is the result of different types of expressions. TODO
+    assert(ast[1].tag == 'Id', 'Only simple calls currently supported')
+    -- Also we don't support callee expressions which are local variables,
+    -- it must be a global. TODO
     local calleeId = ast[1][1]
-    -- First we must push a PostScript 'mark.' This is part of the current calling
-    -- convention I've come up with.
-    -- XXX here i bypass ps:emit()
-    ps:write(string.format('mark %% setting up stack frame for call to %s pos=%s\n',
-      calleeId, tostring(ast.pos)))
-    -- Second, we must push our arguments. To do that, we simply descend into them
-    -- via lua2ps(). Currently, our calling convention (mostly implemented in the
-    -- ps module) pushes arguments onto the stack in right-to-left order. XXX In
-    -- contravention of Lua's behavior, right now to simplify my life, function
-    -- arguments are also *evaluated* in right-to-left order!
-    for iArgNode = #ast, 2, -1 do
-      lua2ps(ast[iArgNode], locals)
-    end
-    -- With our arguments on the stack, set up the function call
-    if locals[calleeId] ~= nil then
-      -- Call a local
-      error('Calling a local currently unsupported! TODO')
-    else
-      -- Call a global
-      ps:emitGlobalFunctionCall(calleeId)
-    end
+    assert(locals[calleeId] == nil, "Calling a local currently unsupported! TODO")
+    -- Emit the call code
+    ps:emitGlobalFunctionCall(calleeId, #ast-1, function(n)
+      -- Evaluate the 'n'th function call argument.
+      lua2ps(ast[n+1], locals)
+    end)
 
   -- Table node
   elseif ast.tag == 'Table' then
@@ -297,15 +316,15 @@ function lua2ps(ast, locals)
       -- If we have a Pair node, that means we have an explicit key
       if child.tag == 'Pair' then
         -- evaluate key, put on PostScript stack
-        lua2ps(child[1])
+        lua2ps(child[1], locals)
         -- evaluate value, put on PostScript stack
-        lua2ps(child[2])
+        lua2ps(child[2], locals)
       else
         -- put auto table key on PostScript stack
         ps:emit(cursor, '% auto table key')
         cursor = cursor + 1
         -- evaluate value, put on PostScript stack
-        lua2ps(child)
+        lua2ps(child, locals)
       end
       -- Emit table assignment
       ps:emit('luaTableSet')
@@ -328,17 +347,53 @@ function lua2ps(ast, locals)
     -- Finally, we emit the code to evaluate the Index operation.
     ps:emit('luaTableGet')
 
+  -- Fornum node
+  -- NOTE: The order in which the for loop parameter's expressions are evaluated
+  -- probably doesn't match Lua's.
+  elseif ast.tag == 'Fornum' then
+    -- I think this syntax requires two or three numeric expressions: the initial
+    -- value, the terminal value, and optionally the increment. PostScript "for"
+    -- loop requires us to specify all three, and then the proc that runs in the
+    -- loop. The iterator variable is local to the scope of the loop, which is
+    -- handled by our Block child node.
+    assert((#ast == 4 or #ast == 5) and ast[1].tag == 'Id' and ast[#ast].tag == 'Block')
+    -- Evaluate expression obtaining initial iteration value
+    lua2ps(ast[2], locals)
+    -- Evaluate expression obtaining iteration interval
+    if #ast == 5 then
+      lua2ps(ast[4], locals)
+    else
+      ps:emit(1, '% default Fornum interval')
+    end
+    -- Evaluate expression obtaining terminal iteration value
+    lua2ps(ast[3], locals)
+    -- Descend into Block node child, providing iterator variable as a new local.
+    -- We wrap the call to block2ps() in ps:doBlockScope() to help construct the
+    -- Block on the PostScript side.
+    ps:doBlockScope(function()
+      block2ps(ast[#ast], ast, locals, { [ast[1][1]] = { indexFromBottom = 0 } })
+    end)
+    -- Emit 'for'
+    ps:emit('for', '% Fornum loop pos=' .. tostring(ast.pos))
+    
   else error(string.format('AST node tag "%s" is unimplemented!',
     tostring(ast.tag)))
   end
+
+  indent = indent - 2
 end
 
 function dumpLocals(locals)
+  local some = false
   for localName, localInfo in mpairs(locals) do
-    print(string.format('dump> local "%s"', localName))
+    some = true
+    trace(string.format('locals> local "%s"', localName))
     for k, v in pairs(localInfo) do
-      print(string.format('dump>  "%s" = "%s"', tostring(k), tostring(v)))
+      trace(string.format('locals>  "%s" = "%s"', tostring(k), tostring(v)))
     end
+  end
+  if some == false then
+    trace('locals> NO LOCALS')
   end
 end
 
@@ -408,6 +463,50 @@ function doAssignments(ast, locals)
         -- Emit global assignment
         ps:emitGlobalAssignment(child[1])
       end
+    end
+  end
+end
+
+-- A simple helper for lua2ps
+function block2ps(ast, parent, locals, newLocals)
+  assert(ast.tag == 'Block')
+  -- When we visit a Block node, we need a place to to store our locals,
+  -- and via the '__table' metamethod, it also provides the facility
+  -- which allows us to handle nested local variable scopes, and variable
+  -- shadowing. If it's non-nil, that means we have locals which are not
+  -- declared by child nodes of our Block node, which means we have to
+  -- deal with them here, instead of in, say, a Local node.
+  if newLocals == nil then
+    newLocals = {}
+  end
+  -- Function Blocks handle their own stacks.
+  if parent.tag ~= 'Function' then
+    -- Let's emit the "phony" PostScript operator, which lies to our
+    -- PostScript emitter about stack size, allowing our parent node
+    -- to take the responsibility for putting this local on the stack
+    -- for us.
+    for localName, _ in pairs(newLocals) do
+      ps:emit('phony', '% for ' .. localName)
+    end
+  end
+  -- Set up the __index metamethod for the new locals table so that our
+  -- enclosing scopes are accessible, and respecting of variable shadowing,
+  -- via the locals table we will pass to recursive visits to this node's
+  -- children.
+  setmetatable(newLocals, { __index = locals })
+  -- This function has done a lot to help, so now we send it back to lua2ps()
+  -- for the simplest portion of its processing.
+  lua2ps(ast, newLocals)
+  -- Functions clean up their own stacks
+  if parent.tag ~= 'Function' then
+    trace('Cleaning up locals')
+    -- At the end of the block, we must pop our locals off the stack.
+    -- This loop only visits locals which belong specifically to our
+    -- locals, not locals we inherit from enclosing scopes!
+    for localName, localProps in pairs(newLocals) do
+      ps:emit('pop', string.format('%% cleaning up locals (maybe "%s", index from bottom of stack = %s)',
+        localName, tostring(localProps.indexFromBottom)))
+      localProps.stackDepth = -1 -- invalidate local
     end
   end
 end

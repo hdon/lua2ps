@@ -17,8 +17,18 @@ function PS:new(out)
     , put           = { pop = 3 , push = 0 }
     , dup           = { pop = 1 , push = 2 }
     , pop           = { pop = 1 , push = 0 }
+    , mark          = { pop = 0 , push = 1 }
     , roll          = { pop = 2 , push = 0 } -- TODO stack check of roll operand?
+    , ['for']       = { pop = 4 , push = 0 }
+
     -- Standard lua2ps commands, from prologue.ps --
+    -- 'phony' is a pseudo-instruction to push a value onto the stack. these are useful when PostScript
+    -- is expected to automatically put something on the stack for us at the beginning of a proc.
+    , phony         = { pop = 0 , push = 1 }
+    -- 'kram' is a pseudo-instruction to clear a mark off the stack.
+    -- See emitGlobalFunctionCall() for more info.
+    , kram          = { pop = 1 , push = 0 }
+    -- these are for dealing with Lua tables
     , luaTableNew   = { pop = 1 , push = 1 }
     , luaTableGet   = { pop = 2 , push = 1 }
     , luaTableSet   = { pop = 3 , push = 0 }
@@ -62,7 +72,6 @@ function PS:nudgeStackDepth(n)
 end
 
 function PS:emit(...)
-  trace('emitting ----->', ...)
   local args = {...}
   for i, a in ipairs(args) do
 
@@ -208,10 +217,61 @@ function PS:emitFunctionReturn(numReturns, pos)
   self:write(string.format('counttomark 1 add 1 roll cleartomark exit %% return pos=%d\n', pos))
 end
 
-function PS:emitGlobalFunctionCall(id)
-  -- We don't have to do anything special here because we assume every function has
-  -- a single return value.
+function PS:emitGlobalFunctionCall(id, numArgs, evalArg)
+  -- Our calling convention requires us to push a PostScript mark, followed by the
+  -- function call arguments, in right-to-left order. XXX We're also evaluating
+  -- these arguments in right-to-left order, which is not what Lua does.
+
+  -- We can emit 'mark' here safely, since currently we assume that every function
+  -- has *exactly* one return value. The callee cleans up the mark, and our stack
+  -- depth achieves parity on its own.
+  self:emit('mark', string.format('%% setting up call for "%s()"', id))
+
+  -- Evaluate arguments in right-to-left order
+  for i = numArgs, 1, -1 do
+    evalArg(i)
+  end
+
+  -- Let's bypass emit() for simplicity. The code emitted here will invoke the named
+  -- PostScript operator, using the dictionary stack. The user dict will contain all
+  -- of our globals, so this should work just fine, and the callee will clean up the
+  -- stack for us, and leave us *exactly* one return value. TODO support more arguments.
   self:write(self:makeGlobalIdentifier(id), '\n')
+
+  -- Emit a fake PostScript operator to remove the 'mark'. See 'kram' in 'psCommands' for
+  -- more info. TODO is it a better solution to set psCommands.mark.push = 0? Or to bypass
+  -- the emission of 'mark' ?
+  self:emit('kram', string.format('%% finish call to "%s()"', id))
+end
+
+-- This is used for non-Function Block nodes. Functions have varargs, and deal with the
+-- stack their own way. For other Block nodes, like those in loops, or branches, we use
+-- this to emit PostScript's curly braces, and also to verify that the stack remains
+-- clean in each loop. This function sets up and tears down the block on the PostScript
+-- side. On the Lua side, 'fn' is called to process the contents of the associated
+-- Block node.
+function PS:doBlockScope(fn)
+  -- Push block frame into the stack monitor.
+  self.stackDepth[#self.stackDepth+1] = 0
+  -- Emit curly brace to begin PostScript proc
+  self:write('{')
+  -- Call 'fn' to allow our caller to process the contents of the block
+  fn()
+  -- We're at the end of our PostScript proc, and we need ensure that the stack depth is
+  -- in the state expected at the beginning of the proc, less whatever PostScript will be
+  -- putting on the stack for us. Block node processing should take care of it for us,
+  -- but let's verify that it did its job correctly.
+  if self.stackDepth[#self.stackDepth] ~= 0 then
+    error(string.format('Block mismanged PostScript operand stack by %d operands',
+      self.stackDepth[#self.stackDepth]))
+  end
+  -- Emit curly brace to close PostScript proc
+  self:write('}')
+  -- Pop block frame from the stack monitor.
+  self.stackDepth[#self.stackDepth] = nil
+  -- Increment monitored stack depth here, because we've just pushed the PostScript proc
+  -- within the curly braces.
+  self:nudgeStackDepth(1)
 end
 
 function PS:emitString(s)

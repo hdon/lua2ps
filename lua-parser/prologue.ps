@@ -142,7 +142,16 @@ false % disable trace output
   {
     dup mark eq { pop exit } { == } ifelse
   } loop
+  null % current Lua calling convention requires exactly one return value
 } def
+
+% This is used by the PostScript emitter in the lua2ps translator to handle implicit
+% local variables. A PostScript optimizer I am dreaming up will remove this automatically
+% for us! (Hi Rickie)
+/phony { } def
+% This is used by the PostScript emitter to pop a mark where the calling convention actually
+% requires that the callee clean up its own stack, and the mark along with it.
+/kram { } def
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%   END    OF   THE   PROLOGUE.   GENERATED   CODE  STARTS   HERE!  %%%%
