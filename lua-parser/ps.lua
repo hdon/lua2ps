@@ -235,13 +235,23 @@ function PS:emitGlobalFunctionCall(id, numArgs, evalArg)
   -- Let's bypass emit() for simplicity. The code emitted here will invoke the named
   -- PostScript operator, using the dictionary stack. The user dict will contain all
   -- of our globals, so this should work just fine, and the callee will clean up the
-  -- stack for us, and leave us *exactly* one return value. TODO support more arguments.
+  -- stack for us, and leave us *exactly* one return value. We'll also emit a 'phony'
+  -- for this return value.
+  -- TODO support variadic return values.
   self:write(self:makeGlobalIdentifier(id), '\n')
+  self:emit('phony', string.format('%% pseudo-pushing return value for "%s()" call', id))
 
   -- Emit a fake PostScript operator to remove the 'mark'. See 'kram' in 'psCommands' for
-  -- more info. TODO is it a better solution to set psCommands.mark.push = 0? Or to bypass
+  -- more info. I guess we'll also do this for each function argument. I guess I don't
+  -- want to bypass the PS:emit() too much, because I'd like to eventually make functions
+  -- with a specific number of arguments and return values, as opposed to treating all
+  -- functions like varargs functions.
+  -- TODO is it a better solution to set psCommands.mark.push = 0? Or to bypass
   -- the emission of 'mark' ?
-  self:emit('kram', string.format('%% finish call to "%s()"', id))
+  for i = 1, numArgs do
+    self:emit('kram', string.format('%% pseudo-popping argument for "%s()" call', id))
+  end
+  self:emit('kram', string.format('%% pseudo-popping mark for "%s()" call', id))
 end
 
 -- This is used for non-Function Block nodes. Functions have varargs, and deal with the
