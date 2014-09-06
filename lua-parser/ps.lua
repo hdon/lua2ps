@@ -17,8 +17,10 @@ function PS:new(out)
     , put           = { pop = 3 , push = 0 }
     , dup           = { pop = 1 , push = 2 }
     , pop           = { pop = 1 , push = 0 }
+    , def           = { pop = 2 , push = 0 }
     , mark          = { pop = 0 , push = 1 }
     , roll          = { pop = 2 , push = 0 } -- TODO stack check of roll operand?
+    , exch          = { pop = 2 , push = 2 }
     , ['for']       = { pop = 4 , push = 0 }
 
     -- Standard lua2ps commands, from prologue.ps --
@@ -70,6 +72,60 @@ function PS:nudgeStackDepth(n)
   self.stackDepth[#self.stackDepth] = n + self.stackDepth[#self.stackDepth]
   trace(string.format('  stack depth change %d -> %d', x, self:getStackDepth()))
 end
+function PS:doStackFrame(fn)
+  self.stackDepth[#self.stackDepth+1] = 0
+  fn(#self.stackDepth)
+  self.stackDepth[#self.stackDepth] = nil
+end
+
+-- Using a 'locals' table, which uses the __index metamethod to stack local variables
+-- with respect to variable shadowing and compartmentalized by frames and pseudo-
+-- frames in the same way that our own PS:stackDepth is, we can calculate the exact
+-- position from the top of the stack that contains the value represented by a named
+-- local variable.
+function PS:calculateStackIndexOfLocal(locals, localName)
+  local localProps = locals[localName]
+  -- First check if the local exists
+  assert(localProps ~= nil)
+  -- This is the index of the self.stackDepth that corresponds to the pseudo-frame of
+  -- our search.
+  local currentDepthFrame = #self.stackDepth
+  -- This is the sum of all self.stackDepth elements we've visited
+  local accumulatedStackDepth = 0
+  local localsFrame = locals
+  while true do
+    -- Interrogate the 'locals' table for visibility within each pseudo-frame, starting
+    -- at the top, and working our way toward the bottom. When we can't see it anymore,
+    -- the last frame we examined is its true home.
+    if localsFrame[localName] == nil then break end
+    -- Tally up the total stack depth from the top frame to the local's true home.
+    accumulatedStackDepth = accumulatedStackDepth + self.stackDepth[currentDepthFrame]
+    -- Walk up the chain of nested local variable scopes, and ..
+    localsFrame = getmetatable(localsFrame)
+    -- ..our self.stackDepth[]
+    currentDepthFrame = currentDepthFrame - 1
+    -- Sanity checks
+    assert(localsFrame ~= nil)
+    assert(currentDepthFrame > 0)
+  end
+  -- We found our local in the previous frame, so, here we are
+  currentDepthFrame = currentDepthFrame + 1
+  -- Ensure a little sanity
+  if localProps.indexFromBottom >= self.stackDepth[currentDepthFrame] then
+    trace('error')
+    dumpLocals(locals)
+    self:dumpStack()
+    error(string.format('local "%s" claims to have indexFromBottom=%d', localName, localProps.indexFromBottom))
+  end
+  -- Calculate and return the local's position from the top of the stack.
+  return accumulatedStackDepth - localProps.indexFromBottom - 1
+end
+
+function PS:dumpStack()
+  for i = 1, #self.stackDepth do
+    trace(string.format('PS:stackDepth[%d] = %d', i, self.stackDepth[i]))
+  end
+end
 
 function PS:emit(...)
   local args = {...}
@@ -96,6 +152,7 @@ function PS:emit(...)
         -- Check for stack underflow
         local cmd = self.psCommands[a]
         if self:getStackDepth() < cmd.pop then
+          trace(string.format('error emitting "%s" PostScript command', a))
           error('PostScript stack underflow')
         end
 
@@ -107,6 +164,11 @@ function PS:emit(...)
 
       -- The command is to evaluate a global
       elseif self:isGlobalIdentifier(a) then
+        self:nudgeStackDepth(1)
+        self:write(a)
+
+      -- The command is a PostScript nametype
+      elseif string.starts(a, '/') then
         self:nudgeStackDepth(1)
         self:write(a)
 
@@ -124,22 +186,12 @@ function PS:emit(...)
 end
 
 -- Emit PostScript instructions to evaluate a local variable.
--- 'index' is an index from the BOTTOM of the stack, not the top!
--- this function converts the index so that it is relative to the
--- top of the stack.
-function PS:emitLocalRvalue(index, id, pos)
-  -- Give anonymous locals a name (NOTE I'm not sure this is needed
-  -- but I'm thinking of using it to make some jobs easier.)
-  if id == nil then id = 'anonymous' end
-  --
+function PS:emitLocalRvalue(locals, localName, pos)
   if pos == nil then pos = -1 end
-  trace(string.format('evaluating local "%s" (index from bottom = %d, stack depth = %d) pos=%d',
-    id, index, self:getStackDepth(), pos))
-  -- Check for PostScript stack underflow
-  assert(index < self:getStackDepth())
+  -- Find this local's position on the stack, from the top
+  local stackIndex = self:calculateStackIndexOfLocal(locals, localName)
   -- Emit PostScript
-  self:write(string.format('%d index %% evaluate local "%s" as an rvalue stackDepth=%d pos=%d\n',
-    self:getStackDepth() - index - 1, id, self:getStackDepth(), pos))
+  self:write(string.format('%d index %% evaluate local "%s" as an rvalue pos=%d\n', stackIndex, localName, pos))
   -- Adjust stack depth
   self:nudgeStackDepth(1)
 end
@@ -173,38 +225,46 @@ end
 function PS:emitGlobalAssignment(id)
   assert('string' == type(id))
   trace(string.format('assigning to global "%s"', id))
-  self:write(string.format('/%s exch def %% assign to global "%s"\n', self:makeGlobalIdentifier(id), id))
+  self:emit('/' .. self:makeGlobalIdentifier(id), 'exch', 'def', '% assign to global "'..id..'"')
 end
 
-function PS:openFunction()
-  trace('PS:openFunction()')
-  self.stackDepth[#self.stackDepth+1] = 0
-  self:write('{ {\n')
-end
-
-function PS:closeFunction()
-  trace('PS:closeFunction()')
-  self.stackDepth[#self.stackDepth] = nil
-  self:write('} loop }\n')
-end
-
--- Currently this doesn't work for nested functions!
-function PS:emitFunctionIntroduction(numArgs, pos)
+function PS:doFunction(numArgs, pos, fn)
   -- Our stackDepth should be zero, unless this is a nested function. This is
   -- not a definitive test, though, as a function that has zero locals at the
   -- point of its nested function will still leave us with a stackDepth of zero.
-  assert(self:getStackDepth() == 0)
-  -- Our function calling supports variadic argument, and we simplify things
-  -- some by using PostScript's "mark" to delineate stack frames. Our function
-  -- introduction code uses these marks to count arguments, and sets their values
-  -- to nil, for which we use the PostScript value 'null'.
-  self:write(string.format('counttomark %d sub 1 0 { pop null } for %% function pos=%d\n', 
-    numArgs - 1
-  , pos
-  ))
-  -- Record our new stack depth. Our caller should count current locals, which
-  -- should only be function arguments at this point, from zero.
-  self:nudgeStackDepth(numArgs)
+  if self:getStackDepth() ~= 0 then
+    for k, v in ipairs(self.stackDepth) do
+      print(string.format('stackDepth[%d] = %d', k, v))
+    end
+    error("doFunction() encountered unclean stack (nested functions not supported, module-scope locals not supported)")
+  end
+
+  self:doStackFrame(function()
+    self:write('{ {\n')
+
+    -- Our function calling supports variadic argument, and we simplify things
+    -- some by using PostScript's "mark" to delineate stack frames. Our function
+    -- introduction code uses these marks to count arguments, and sets their values
+    -- to nil, for which we use the PostScript value 'null'.
+    self:write(string.format('counttomark %d sub 1 0 { pop null } for %% function pos=%d\n', 
+      numArgs - 1
+    , pos
+    ))
+
+    -- Record our new stack depth. Our caller should count current locals, which
+    -- should only be function arguments at this point, from zero.
+    self:nudgeStackDepth(numArgs)
+
+    -- Let lua2ps() handle the function body
+    fn()
+
+    -- Close the function
+    self:write('} loop }\n')
+  end)
+
+  -- Increment stack depth to account for the presence of the new function's
+  -- PostScript proc being put on the stack
+  self:nudgeStackDepth(1)
 end
 
 function PS:emitFunctionReturn(numReturns, pos)
@@ -261,24 +321,24 @@ end
 -- side. On the Lua side, 'fn' is called to process the contents of the associated
 -- Block node.
 function PS:doBlockScope(fn)
-  -- Push block frame into the stack monitor.
-  self.stackDepth[#self.stackDepth+1] = 0
   -- Emit curly brace to begin PostScript proc
   self:write('{')
-  -- Call 'fn' to allow our caller to process the contents of the block
-  fn()
-  -- We're at the end of our PostScript proc, and we need ensure that the stack depth is
-  -- in the state expected at the beginning of the proc, less whatever PostScript will be
-  -- putting on the stack for us. Block node processing should take care of it for us,
-  -- but let's verify that it did its job correctly.
-  if self.stackDepth[#self.stackDepth] ~= 0 then
-    error(string.format('Block mismanged PostScript operand stack by %d operands',
-      self.stackDepth[#self.stackDepth]))
-  end
+
+  self:doStackFrame(function()
+    -- Call 'fn' to allow our caller to process the contents of the block
+    fn()
+    -- We're at the end of our PostScript proc, and we need ensure that the stack depth is
+    -- in the state expected at the beginning of the proc, less whatever PostScript will be
+    -- putting on the stack for us. Block node processing should take care of it for us,
+    -- but let's verify that it did its job correctly.
+    if self:getStackDepth() ~= 0 then
+      error(string.format('Block mismanged PostScript operand stack by %d operands',
+        self.stackDepth[#self.stackDepth]))
+    end
+  end)
+
   -- Emit curly brace to close PostScript proc
   self:write('}')
-  -- Pop block frame from the stack monitor.
-  self.stackDepth[#self.stackDepth] = nil
   -- Increment monitored stack depth here, because we've just pushed the PostScript proc
   -- within the curly braces.
   self:nudgeStackDepth(1)

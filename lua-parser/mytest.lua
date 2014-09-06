@@ -10,83 +10,6 @@ filename = 'test1.lua'
 --filename = "/mnt/oih/hdon/src/git/luaqrcode/qrencode.lua"
 --filename = 'qrencode.lua'
 
-parser = require "lua-parser.parser"
-pp     = require "lua-parser.pp"
-
-function readFile(file)
-  local f = io.open(file, "rb")
-  local content = f:read("*all")
-  f:close()
-  return content
-end
-
-function writeFile(file, contents)
-  local f,err = io.open(file, "w")
-  if not f then return print(err) end
-  f:write(contents)
-  f:close()
-end
-
-function dumpAST (t, i, f)
-  if f == nil then print('*********8 DUMP TO STDOUT') f = io.stdout end
-  if i == nil then i = 0 end
-  f:write(string.format("{\n"))
-  local tag = t.tag
-  if tag == nil then tag = 'NIL!' end
-  local pos = t.pos
-  if pos == nil then pos = 'NIL!' end
-  f:write(string.format("%s[tag] = %s\n", string.rep(" ", i+2), tag))
-  f:write(string.format("%s[pos] = %s\n", string.rep(" ", i+2), pos))
-  for k,v in ipairs(t) do
-    f:write(string.format("%s[%s] = ", string.rep(" ", i+2), tostring(k)))
-    if type(v) == "table" then
-      dumpAST(v,i+2, f)
-    else
-      f:write(string.format("%s\n", tostring(v)))
-    end
-  end
-  f:write(string.format("%s}\n", string.rep(" ", i)))
-end
-
-function dumpASTfile(file, ast)
-  local f, err = io.open(file, 'w')
-  if not f then return print(err) end
-  dumpAST(ast, 0, io.stdout)
-  f:close()
-end
-
-function dumpSourceAndASTfile(file, source, ast)
-  local f, err = io.open(file, 'w')
-  if not f then return print(err) end
-  f:write(source)
-  f:write('-----------------------\n')
-  f:write('-----   AST    --------\n')
-  f:write('-----------------------\n')
-  dumpAST(ast, 0, f)
-  f:close()
-end
-
-source = readFile(filename)
-ast = parser.parse(source, filename)
-print('writing Lua source and AST to _ast.lua')
-dumpSourceAndASTfile('_ast.lua', source, ast)
-
-function trace(...)
-  local line
-  if indent > 0 then
-    line = string.rep(' ', indent)
-  else
-    line = ''
-  end
-  for i, s in ipairs({...}) do
-    if i > 1 then
-      line = line .. ' '
-    end
-    line = line .. s
-  end
-  print(line)
-end
-
 indent = -2
 local ps = PS:new('out.ps')
 -- This function recursively visits an entire Lua AST, emitting PostScript.
@@ -121,9 +44,7 @@ function lua2ps(ast, locals)
   elseif ast.tag == 'Function' then
     assert(#ast == 2)
     local numArgs = 0 -- number of arguments for our function
-    -- First we need to tell our emitter, which is responsible for monitoring
-    -- our stack frame, that we're beginning a new function.
-    ps:openFunction()
+
     -- We need to create new locals for function arguments. We should find
     -- the names of arguments in ast[1]. We don't put these into our own
     -- 'locals', because that is within our parent scope, our scope is only
@@ -147,20 +68,16 @@ function lua2ps(ast, locals)
     else
       assert(ast[1].tag == nil)
     end
-    --dumpLocals(locals)
-    -- Emit function introduction, which fits the callee's arguments into
-    -- our locals, and sets the groundwork for varargs.
-    -- TODO full support for varargs!
-    ps:emitFunctionIntroduction(numArgs, ast.pos)
-    -- Descend into function body
-    block2ps(ast[2], ast, locals, newLocals)
-    -- Without further analysis, we don't know if control flow might reach the
-    -- very end of our function, so we'll make sure to clean up the stack frame
-    -- here and return from the function. Since we only support *exactly* one
-    -- function return value, we'll return nil, or null in PostScript.
-    lua2ps({tag='Return', {tag='Nil'}}, locals)
-    -- Now we can tell our emitter that we're done defining this function.
-    ps:closeFunction()
+
+    ps:doFunction(numArgs, ast.pos, function()
+      -- Descend into function body
+      block2ps(ast[2], ast, locals, newLocals)
+      -- Without further analysis, we don't know if control flow might reach the
+      -- very end of our function, so we'll make sure to clean up the stack frame
+      -- here and return from the function. Since we only support *exactly* one
+      -- function return value, we'll return nil, or null in PostScript.
+      lua2ps({tag='Return', {tag='Nil'}}, locals)
+    end)
 
   -- Localrec node
   elseif ast.tag == 'Localrec' then
@@ -260,7 +177,8 @@ function lua2ps(ast, locals)
     -- Does identifier identify a local?
     if locals[ast[1]] ~= nil then
       -- Identifies local
-      ps:emitLocalRvalue(locals[ast[1]].indexFromBottom, ast[1], ast.pos)
+      --ps:emitLocalRvalue(locals[ast[1]].indexFromBottom, ast[1], ast.pos)
+      ps:emitLocalRvalue(locals, ast[1], ast.pos)
     else
       -- Identifies global
       ps:emit(ps:makeGlobalIdentifier(ast[1]))
@@ -371,6 +289,7 @@ function lua2ps(ast, locals)
     -- We wrap the call to block2ps() in ps:doBlockScope() to help construct the
     -- Block on the PostScript side.
     ps:doBlockScope(function()
+      -- ast[1][1] should be a string containing our iterator variable name
       block2ps(ast[#ast], ast, locals, { [ast[1][1]] = { indexFromBottom = 0 } })
     end)
     -- Emit 'for'
@@ -497,6 +416,7 @@ function block2ps(ast, parent, locals, newLocals)
   -- This function has done a lot to help, so now we send it back to lua2ps()
   -- for the simplest portion of its processing.
   lua2ps(ast, newLocals)
+
   -- Functions clean up their own stacks
   if parent.tag ~= 'Function' then
     trace('Cleaning up locals')
@@ -510,6 +430,14 @@ function block2ps(ast, parent, locals, newLocals)
     end
   end
 end
+
+parser = require "lua-parser.parser"
+pp     = require "lua-parser.pp"
+
+source = readFile(filename)
+ast = parser.parse(source, filename)
+print('writing Lua source and AST to _ast.lua')
+dumpSourceAndASTfile('_ast.lua', source, ast)
 
 print('--- ast2ps ---')
 lua2ps(ast, {})
