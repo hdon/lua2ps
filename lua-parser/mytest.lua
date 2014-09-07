@@ -294,20 +294,11 @@ function lua2ps(ast, locals)
     -- Descend into Block node child, providing iterator variable as a new local.
     -- We wrap the call to block2ps() in ps:doBlockScope() to help construct the
     -- Block on the PostScript side.
-    -- XXX I don't like that I am doing it this way, but because 'for' consumes
-    --     three operands which occur before the PostScript proc representing
-    --     our loop body, we need to fake an adjustment to the stack depth before
-    --     and after our for loop body. This is the easiest way to do this, but
-    --     with a little more forethought, I might have had a better system in
-    --     place to do this in a more sensible manner.
-    ps:emit('kram', 'kram', 'kram', '% phony stack bookkeeping for following proc')
     ps:doBlockScope(function()
       -- ast[1][1] should be a string containing our iterator variable name
       block2ps(ast[#ast], ast, locals, { [ast[1][1]] = { indexFromBottom = 0 } })
-    end)
-    -- Emit 'for'
-    ps:emit('phony', 'phony', 'phony', '% phony stack bookkeeping for preceding proc')
-    ps:emit('for', '% Fornum loop pos=' .. tostring(ast.pos))
+    end, 1, 'for')
+    ps:emit('% Fornum loop pos=' .. tostring(ast.pos))
     
   else error(string.format('AST node tag "%s" is unimplemented!',
     tostring(ast.tag)))

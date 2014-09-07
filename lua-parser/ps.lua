@@ -22,6 +22,8 @@ function PS:new(out)
     , roll          = { pop = 2 , push = 0 } -- TODO stack check of roll operand?
     , exch          = { pop = 2 , push = 2 }
     , ['for']       = { pop = 4 , push = 0 }
+    , ['if']        = { pop = 2 , push = 0 }
+    , ['ifelse']    = { pop = 3 , push = 0 }
 
     -- Standard lua2ps commands, from prologue.ps --
     -- 'phony' is a pseudo-instruction to push a value onto the stack. these are useful when PostScript
@@ -305,29 +307,58 @@ end
 -- this to emit PostScript's curly braces, and also to verify that the stack remains
 -- clean in each loop. This function sets up and tears down the block on the PostScript
 -- side. On the Lua side, 'fn' is called to process the contents of the associated
--- Block node.
-function PS:doBlockScope(fn)
-  -- Emit curly brace to begin PostScript proc
-  self:write('{')
+-- Block node. 'fn' is called 'numProcs' times. For each call, the
+-- stack integrity is re-checked. This can be used for emitting multiple PostScript
+-- procs that are invoked by the same PostScript command, which right now is only
+-- PostScript ifelse. The 'user' argument is a PostScript operator that is emitted that
+-- executes any PostScript procs emitted here. The stack is automatically adjusted by
+-- the user for the procs.
+function PS:doBlockScope(fn, numProcs, user)
+  -- We're emitting procs here. That means the stack state needs to conform to the state
+  -- it will be in when the procs will be entered (that is, after the PostScript operator
+  -- specified in our 'user' argument consumes its operands!)
+  -- First, fetch info about the operator.
+  local userOperator = self.psCommands[user]
+  if userOperator == nil then
+    error(string.format('Unknown PostScript operator: "%s"', user))
+  end
 
+  -- Make sure the 'user' operator will consume all the procs being specified.
+  if numProcs >= userOperator.pop then
+    error(string.format('"%s" operator does not consume %d procs, only %d', user, numProcs, userOperator.pop))
+  end
+
+  -- Now align the stack with the needs of the following procs
+  self:nudgeStackDepth(numProcs -userOperator.pop)
+
+  -- Now we'll emit 'numProcs' procs
   self:doStackFrame(function()
+    -- Emit curly brace to begin PostScript proc
+    self:write('{')
+
     -- Call 'fn' to allow our caller to process the contents of the block
-    fn()
-    -- We're at the end of our PostScript proc, and we need ensure that the stack depth is
-    -- in the state expected at the beginning of the proc, less whatever PostScript will be
-    -- putting on the stack for us. Block node processing should take care of it for us,
-    -- but let's verify that it did its job correctly.
-    if self:getStackDepth() ~= 0 then
-      error(string.format('Block mismanged PostScript operand stack by %d operands',
-        self.stackDepth[#self.stackDepth]))
+    for iProc = 1, numProcs do
+      more = fn()
+      -- We're at the end of our PostScript proc, and we need ensure that the stack depth is
+      -- in the state expected at the beginning of the proc, less whatever PostScript will be
+      -- putting on the stack for us. Block node processing should take care of it for us,
+      -- but let's verify that it did its job correctly.
+      if self:getStackDepth() ~= 0 then
+        error(string.format('Block mismanged PostScript operand stack by %d operands',
+          self.stackDepth[#self.stackDepth]))
+      end
     end
+
+    -- Emit curly brace to close PostScript proc
+    self:write('}')
   end)
 
-  -- Emit curly brace to close PostScript proc
-  self:write('}')
-  -- Increment monitored stack depth here, because we've just pushed the PostScript proc
-  -- within the curly braces.
-  self:nudgeStackDepth(1)
+  -- Adjust the stack to undo our previous stack nudge, as the change will be made by emit()
+  -- I could just bypass emit() I guess...
+  self:nudgeStackDepth(userOperator.pop)
+
+  -- Emit the operator that uses the procs we've pushed.
+  self:emit(user)
 end
 
 function PS:emitString(s)
