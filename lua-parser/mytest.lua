@@ -156,7 +156,7 @@ function lua2ps(ast, locals)
         ps:emit('mul')
       elseif ast[1] == 'add' then
         ps:emit('add')
-      else error("unknown lua operator") end
+      else error("unknown binary lua operator") end
     elseif #ast == 2 then
       -- Unary operators
       if ast[1] == 'len' then
@@ -164,7 +164,7 @@ function lua2ps(ast, locals)
         lua2ps(ast[2], locals)
         -- emit PostScript for #tbl operation
         ps:emit('luaTableLength')
-      else error('unknown unary operator: ' .. ast[1]) end
+      else error('unknown unary lua operator: ' .. ast[1]) end
     else error(string.format(
     'Known operators are binary or unary, but found "%s" operator with %d operands!', ast[1], #ast))
     end
