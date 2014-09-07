@@ -124,6 +124,12 @@ function lua2ps(ast, locals)
       locals[idNode[1]] = {
         indexFromBottom = ps:getStackDepth()
       }
+      -- Here we push nil (null in PostScript) onto the stack. Right now
+      -- doAssignments() will use PostScript roll and pop to remove the
+      -- null and replace it with whatever is assigned to it, if there is
+      -- a value specified in the Lua local statement. TODO Either optimize
+      -- this here, or do it in the PostScript optimizer.
+      ps:emit('null', string.format('%% assign nil by default to local "%s"', idNode[1]))
     end
     -- Evaluate rvalues and assign them to our locals!
     doAssignments(ast, locals)
@@ -288,11 +294,19 @@ function lua2ps(ast, locals)
     -- Descend into Block node child, providing iterator variable as a new local.
     -- We wrap the call to block2ps() in ps:doBlockScope() to help construct the
     -- Block on the PostScript side.
+    -- XXX I don't like that I am doing it this way, but because 'for' consumes
+    --     three operands which occur before the PostScript proc representing
+    --     our loop body, we need to fake an adjustment to the stack depth before
+    --     and after our for loop body. This is the easiest way to do this, but
+    --     with a little more forethought, I might have had a better system in
+    --     place to do this in a more sensible manner.
+    ps:emit('kram', 'kram', 'kram', '% phony stack bookkeeping for following proc')
     ps:doBlockScope(function()
       -- ast[1][1] should be a string containing our iterator variable name
       block2ps(ast[#ast], ast, locals, { [ast[1][1]] = { indexFromBottom = 0 } })
     end)
     -- Emit 'for'
+    ps:emit('phony', 'phony', 'phony', '% phony stack bookkeeping for preceding proc')
     ps:emit('for', '% Fornum loop pos=' .. tostring(ast.pos))
     
   else error(string.format('AST node tag "%s" is unimplemented!',
@@ -313,6 +327,19 @@ function dumpLocals(locals)
   end
   if some == false then
     trace('locals> NO LOCALS')
+  end
+end
+
+function dumpLocals2(locals)
+  local n = 1
+  while 1 do
+    for k, v in pairs(locals) do
+      trace(string.format('locals[%d]> "%s"', n, k))
+    end
+    locals = getmetatable(locals)
+    if locals == nil then break end
+    locals = locals.__index
+    n = n + 1
   end
 end
 
@@ -377,7 +404,7 @@ function doAssignments(ast, locals)
       elseif locals[child[1]] ~= nil then
         assert(locals[child[1]] ~= nil)
         -- Emit local assignment
-        ps:emitLocalAssignment(locals[child[1]].indexFromBottom, child[1], child.pos)
+        ps:emitLocalAssignment(child[1], locals, child.pos)
       else
         -- Emit global assignment
         ps:emitGlobalAssignment(child[1])

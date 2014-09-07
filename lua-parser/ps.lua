@@ -70,7 +70,7 @@ end
 function PS:nudgeStackDepth(n)
   local x = self:getStackDepth()
   self.stackDepth[#self.stackDepth] = n + self.stackDepth[#self.stackDepth]
-  trace(string.format('  stack depth change %d -> %d', x, self:getStackDepth()))
+  trace(string.format('stack depth change %d -> %d', x, self:getStackDepth()))
 end
 function PS:doStackFrame(fn)
   self.stackDepth[#self.stackDepth+1] = 0
@@ -87,6 +87,7 @@ function PS:calculateStackIndexOfLocal(locals, localName)
   local localProps = locals[localName]
   -- First check if the local exists
   assert(localProps ~= nil)
+  dumpLocals2(locals)
   -- This is the index of the self.stackDepth that corresponds to the pseudo-frame of
   -- our search.
   local currentDepthFrame = #self.stackDepth
@@ -101,7 +102,7 @@ function PS:calculateStackIndexOfLocal(locals, localName)
     -- Tally up the total stack depth from the top frame to the local's true home.
     accumulatedStackDepth = accumulatedStackDepth + self.stackDepth[currentDepthFrame]
     -- Walk up the chain of nested local variable scopes, and ..
-    localsFrame = getmetatable(localsFrame)
+    localsFrame = getmetatable(localsFrame).__index
     -- ..our self.stackDepth[]
     currentDepthFrame = currentDepthFrame - 1
     -- Sanity checks
@@ -110,12 +111,12 @@ function PS:calculateStackIndexOfLocal(locals, localName)
   end
   -- We found our local in the previous frame, so, here we are
   currentDepthFrame = currentDepthFrame + 1
+  self:dumpStack() -- whatever
   -- Ensure a little sanity
   if localProps.indexFromBottom >= self.stackDepth[currentDepthFrame] then
     trace('error')
-    dumpLocals(locals)
-    self:dumpStack()
-    error(string.format('local "%s" claims to have indexFromBottom=%d', localName, localProps.indexFromBottom))
+    --dumpLocals2(locals)
+    error(string.format('local "%s" claims to have indexFromBottom=%d, but was found at stack frame %d with a stack depth of %d', localName, localProps.indexFromBottom, #self.stackDepth - currentDepthFrame, self.stackDepth[currentDepthFrame]))
   end
   -- Calculate and return the local's position from the top of the stack.
   return accumulatedStackDepth - localProps.indexFromBottom - 1
@@ -123,7 +124,7 @@ end
 
 function PS:dumpStack()
   for i = 1, #self.stackDepth do
-    trace(string.format('PS:stackDepth[%d] = %d', i, self.stackDepth[i]))
+    trace(string.format('PS:stackDepth(%d) = %d', #self.stackDepth - i, self.stackDepth[i]))
   end
 end
 
@@ -199,22 +200,16 @@ end
 -- Use this to emit PostScript instructions to set the value of
 -- a local variable that was previously declared. The rvalue is
 -- the value at the top of the stack.
-function PS:emitLocalAssignment(index, id, pos)
-  -- Give anonymous locals a name (NOTE I'm not sure this is needed
-  -- but I'm thinking of using it to make some jobs easier.)
-  if id == nil then id = 'anonymous' end
+function PS:emitLocalAssignment(localName, locals, pos)
   --
   if pos == nil then pos = -1 end
-  -- Check for PostScript stack underflow
-  assert(index < self:getStackDepth())
-  trace(string.format('assigning to local "%s" (index from bottom = %d) pos=%d', id, index, pos))
-  -- Emit PostScript
+  trace(string.format('assigning to local "%s" pos=%d', localName, pos))
+  -- Find this local's position on the stack, from the top
+  local stackIndex = self:calculateStackIndexOfLocal(locals, localName)
+  trace(string.format('stack index found: %d', pos))
+  -- Emit PostScript (TODO bypassing :emit why?)
   self:write(string.format('%d %d roll pop %d 1 roll %% assign to local "%s" pos=%d\n',
-    self:getStackDepth() - index
-  , self:getStackDepth() - index - 1
-  , self:getStackDepth() - index - 1
-  , id
-  , pos))
+    stackIndex + 1, stackIndex, stackIndex, localName, pos))
   self:nudgeStackDepth(-1)
 end
 
