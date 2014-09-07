@@ -294,19 +294,10 @@ function PS:emitGlobalFunctionCall(id, numArgs, evalArg)
   -- for this return value.
   -- TODO support variadic return values.
   self:write(self:makeGlobalIdentifier(id), '\n')
-  self:emit('phony', string.format('%% pseudo-pushing return value for "%s()" call', id))
 
-  -- Emit a fake PostScript operator to remove the 'mark'. See 'kram' in 'psCommands' for
-  -- more info. I guess we'll also do this for each function argument. I guess I don't
-  -- want to bypass the PS:emit() too much, because I'd like to eventually make functions
-  -- with a specific number of arguments and return values, as opposed to treating all
-  -- functions like varargs functions.
-  -- TODO is it a better solution to set psCommands.mark.push = 0? Or to bypass
-  -- the emission of 'mark' ?
-  for i = 1, numArgs do
-    self:emit('kram', string.format('%% pseudo-popping argument for "%s()" call', id))
-  end
-  self:emit('kram', string.format('%% pseudo-popping mark for "%s()" call', id))
+  -- The callee cleans the arguments and the mark we pushed for it, and returns exactly
+  -- a single value.
+  self:nudgeStackDepth(-numArgs -1 +1)
 end
 
 -- This is used for non-Function Block nodes. Functions have varargs, and deal with the
