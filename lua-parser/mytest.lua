@@ -156,10 +156,11 @@ function lua2ps(ast, locals)
   -- Op node
   elseif ast.tag == 'Op' then
     assert(#ast > 0)
-    if #ast == 3 then
-      -- Binary operators
+    if #ast == 3 then -- We have a binary operator
+      -- Emit operands
       lua2ps(ast[2], locals)
       lua2ps(ast[3], locals)
+      -- emit operator
       if ast[1] == 'mul' then
         ps:emit('mul')
       elseif ast[1] == 'add' then
@@ -167,13 +168,19 @@ function lua2ps(ast, locals)
       elseif ast[1] == 'eq' then
         ps:emit('eq')
       else error("unknown binary lua operator") end
-    elseif #ast == 2 then
-      -- Unary operators
+
+    elseif #ast == 2 then -- We have a unary operator
+      -- emit operand
+      lua2ps(ast[2], locals)
+      -- emit operator
       if ast[1] == 'len' then
-        -- emit operand
-        lua2ps(ast[2], locals)
         -- emit PostScript for #tbl operation
         ps:emit('luaTableLength')
+      elseif ast[1] == 'not' then
+        -- emit operand
+        lua2ps(ast[2], locals)
+        -- emit 'not' implementation from prologue.ps
+        ps:emit('luaNot')
       else error('unknown unary lua operator: ' .. ast[1]) end
     else error(string.format(
     'Known operators are binary or unary, but found "%s" operator with %d operands!', ast[1], #ast))
