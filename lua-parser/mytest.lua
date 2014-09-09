@@ -145,6 +145,14 @@ function lua2ps(ast, locals)
   elseif ast.tag == 'Nil' then
     ps:emit('null', string.format('%% pos=%s', tostring(ast.pos)))
 
+  -- True node
+  elseif ast.tag == 'True' then
+    ps:emit('true', string.format('%% pos=%s', tostring(ast.pos)))
+
+  -- False node
+  elseif ast.tag == 'False' then
+    ps:emit('false', string.format('%% pos=%s', tostring(ast.pos)))
+
   -- Op node
   elseif ast.tag == 'Op' then
     assert(#ast > 0)
@@ -156,6 +164,8 @@ function lua2ps(ast, locals)
         ps:emit('mul')
       elseif ast[1] == 'add' then
         ps:emit('add')
+      elseif ast[1] == 'eq' then
+        ps:emit('eq')
       else error("unknown binary lua operator") end
     elseif #ast == 2 then
       -- Unary operators
@@ -299,7 +309,45 @@ function lua2ps(ast, locals)
       block2ps(ast[#ast], ast, locals, { [ast[1][1]] = { indexFromBottom = 0 } })
     end, 1, 'for')
     ps:emit('% Fornum loop pos=' .. tostring(ast.pos))
-    
+
+  -- If node
+  elseif ast.tag == 'If' then
+    -- We need a counter to tell us which part of the If node we're at. We could
+    -- do this the traditional functional way, but doBlockScope() counts on us
+    -- taking advantage of closures.
+    local counter = 1
+
+    local function emitIfStuff()
+      trace(string.format('emitIfStuff(%d)', counter))
+      if counter % 2 == 1 and counter < #ast then
+        -- Evaluate condition expression. We use block2ps because it synchronizes
+        -- our Locals stack with the PS:stackDepth stack, not because Lua actually
+        -- needs a block scope here. Actually by doing it this way, we end up
+        -- nesting several empty levels of scope in our locals stack which don't
+        -- even begin to resemble what Lua does, but because they're empty, it
+        -- works. XXX nvm i'm not relying on block2ps
+        --lua2ps(ast[counter], locals)
+        --block2ps(ast[counter], ast, locals)
+        lua2ps(ast[counter], setmetatable({}, { __index = locals } ))
+        local rem = #ast - counter
+        counter = counter + 1
+        --trace(string.format('**IF** counter=%d #ast=%d rem=%d', counter, #ast, rem))
+        if rem == 1 then
+          ps:doBlockScope(emitIfStuff, 1, 'if')
+        else
+          ps:doBlockScope(emitIfStuff, 2, 'ifelse')
+        end
+      else
+        --local rem = #ast - counter
+        --trace(string.format('**IF** counter=%d #ast=%d rem=%d', counter, #ast, rem))
+        local block = ast[counter]
+        counter = counter + 1
+        block2ps(block, ast, locals)
+      end
+    end
+
+    emitIfStuff()
+
   else error(string.format('AST node tag "%s" is unimplemented!',
     tostring(ast.tag)))
   end

@@ -21,6 +21,9 @@ function PS:new(out)
     , mark          = { pop = 0 , push = 1 }
     , roll          = { pop = 2 , push = 0 } -- TODO stack check of roll operand?
     , exch          = { pop = 2 , push = 2 }
+    , eq            = { pop = 2 , push = 1 }
+    , ['true']      = { pop = 0 , push = 1 }
+    , ['false']     = { pop = 0 , push = 1 }
     , ['for']       = { pop = 4 , push = 0 }
     , ['if']        = { pop = 2 , push = 0 }
     , ['ifelse']    = { pop = 3 , push = 0 }
@@ -332,13 +335,13 @@ function PS:doBlockScope(fn, numProcs, user)
   self:nudgeStackDepth(numProcs -userOperator.pop)
 
   -- Now we'll emit 'numProcs' procs
-  self:doStackFrame(function()
-    -- Emit curly brace to begin PostScript proc
-    self:write('{')
+  for iProc = 1, numProcs do
+    self:doStackFrame(function()
+      -- Emit curly brace to begin PostScript proc
+      self:write('{')
 
-    -- Call 'fn' to allow our caller to process the contents of the block
-    for iProc = 1, numProcs do
-      more = fn()
+      -- Call 'fn' to allow our caller to process the contents of the block
+      fn()
       -- We're at the end of our PostScript proc, and we need ensure that the stack depth is
       -- in the state expected at the beginning of the proc, less whatever PostScript will be
       -- putting on the stack for us. Block node processing should take care of it for us,
@@ -347,11 +350,11 @@ function PS:doBlockScope(fn, numProcs, user)
         error(string.format('Block mismanged PostScript operand stack by %d operands',
           self.stackDepth[#self.stackDepth]))
       end
-    end
 
-    -- Emit curly brace to close PostScript proc
-    self:write('}')
-  end)
+      -- Emit curly brace to close PostScript proc
+      self:write('}')
+    end)
+  end
 
   -- Adjust the stack to undo our previous stack nudge, as the change will be made by emit()
   -- I could just bypass emit() I guess...
