@@ -3,16 +3,26 @@ local
   parser
 , pp
 , source
-, filename
+, sourceFilename
+, dest
 , ast
+, argv
 
-filename = 'test1.lua'
---filename = "/mnt/oih/hdon/src/git/luaqrcode/qrencode.lua"
---filename = 'qrencode.lua'
---filename = 'tests/test001.lua'
+argv = {...}
+
+if #argv < 0 or #argv > 2 then
+  error('lua2ps requires 1 or 2 arguments')
+end
+
+sourceFilename = argv[1]
+if #argv == 2 then
+  dest = argv[2]
+else
+  dest = 'out.ps'
+end
 
 indent = -2
-local ps = PS:new('out.ps')
+local ps = PS:new(dest)
 -- This function recursively visits an entire Lua AST, emitting PostScript.
 -- Arguments:
 --   ast:         A syntax node
@@ -528,8 +538,8 @@ end
 parser = require "lua-parser.parser"
 pp     = require "lua-parser.pp"
 
-source = readFile(filename)
-ast = parser.parse(source, filename)
+source = readFile(sourceFilename)
+ast = parser.parse(source, sourceFilename)
 print('writing Lua source and AST to _ast.lua')
 dumpSourceAndASTfile('_ast.lua', source, ast)
 
