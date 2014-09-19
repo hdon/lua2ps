@@ -9,6 +9,7 @@ local
 filename = 'test1.lua'
 --filename = "/mnt/oih/hdon/src/git/luaqrcode/qrencode.lua"
 --filename = 'qrencode.lua'
+--filename = 'tests/test001.lua'
 
 indent = -2
 local ps = PS:new('out.ps')
@@ -19,7 +20,7 @@ local ps = PS:new('out.ps')
 function lua2ps(ast, locals)
   indent = indent + 2
   trace(string.format('visiting %s node @ %s', tostring(ast.tag), tostring(ast.pos)))
-  dumpLocals(locals)
+  --dumpLocals(locals)
 
   -- Block node
   if ast.tag == 'Block' then
@@ -177,8 +178,6 @@ function lua2ps(ast, locals)
         -- emit PostScript for #tbl operation
         ps:emit('luaTableLength')
       elseif ast[1] == 'not' then
-        -- emit operand
-        lua2ps(ast[2], locals)
         -- emit 'not' implementation from prologue.ps
         ps:emit('luaNot')
       else error('unknown unary lua operator: ' .. ast[1]) end
@@ -226,19 +225,23 @@ function lua2ps(ast, locals)
   elseif ast.tag == 'Call' then
     -- Our first child is the callee.
     assert(#ast >= 1)
-    -- Right now we only support a callee expression that is simply a single
-    -- identifier. In something like "foo[1]()" or "foo()()" the function we
-    -- are calling is the result of different types of expressions. TODO
-    assert(ast[1].tag == 'Id', 'Only simple calls currently supported')
-    -- Also we don't support callee expressions which are local variables,
-    -- it must be a global. TODO
-    local calleeId = ast[1][1]
-    assert(locals[calleeId] == nil, "Calling a local currently unsupported! TODO")
-    -- Emit the call code
-    ps:emitGlobalFunctionCall(calleeId, #ast-1, function(n)
-      -- Evaluate the 'n'th function call argument.
-      lua2ps(ast[n+1], locals)
-    end)
+    -- Give some good name to our callee, for diagnostic purposes
+    local calleeDescription
+    if ast[1].tag == 'Id' then
+      calleeDescription = ast[1][1]
+    else
+      calleeDescription = string.format('*expression*')
+    end
+    -- Emit a PostScript 'mark,' as per our calling convention
+    ps:emit('mark', string.format('%% setting up call for "%s()"', calleeDescription))
+    -- Evaluate our arguments in right-to-left order
+    for i = #ast-1, 1, -1 do
+      lua2ps(ast[i+1], locals)
+    end
+    -- Evaluate our callee expression
+    lua2ps(ast[1], locals)
+    -- Emit 'exec' PostScript operator to invoke our function
+    ps:emit('exec', string.format('%% make call to "%s()"', calleeDescription))
 
   -- Table node
   elseif ast.tag == 'Table' then
@@ -335,7 +338,18 @@ function lua2ps(ast, locals)
         -- works. XXX nvm i'm not relying on block2ps
         --lua2ps(ast[counter], locals)
         --block2ps(ast[counter], ast, locals)
-        lua2ps(ast[counter], setmetatable({}, { __index = locals } ))
+        -- XXX I need to reevaluate everything I've written in the comments above.
+        -- PS:doBlockScope() will expect us to derive a new local scope, but we also
+        -- call emitIfStuff() ourseles without bothering with another block scope.
+        -- The latter will not pass us any arguments, but when we call ourselves we
+        -- will, so that we can 
+        local fakeLocals
+        if counter == 1 then
+          fakeLocals = locals
+        else
+          fakeLocals = setmetatable({}, { __index = locals } )
+        end
+        lua2ps(ast[counter], fakeLocals)
         local rem = #ast - counter
         counter = counter + 1
         --trace(string.format('**IF** counter=%d #ast=%d rem=%d', counter, #ast, rem))
@@ -379,8 +393,13 @@ end
 function dumpLocals2(locals)
   local n = 1
   while 1 do
+    local none = true
     for k, v in pairs(locals) do
       trace(string.format('locals[%d]> "%s"', n, k))
+      none = false
+    end
+    if none then
+      trace(string.format('locals[%d]> none', n))
     end
     locals = getmetatable(locals)
     if locals == nil then break end
@@ -488,7 +507,9 @@ function block2ps(ast, parent, locals, newLocals)
   setmetatable(newLocals, { __index = locals })
   -- This function has done a lot to help, so now we send it back to lua2ps()
   -- for the simplest portion of its processing.
+  trace(string.format('block2ps() -> local scope count  up  to %d', 1234))
   lua2ps(ast, newLocals)
+  trace(string.format('block2ps() -> local scope count down to %d', 4321))
 
   -- Functions clean up their own stacks
   if parent.tag ~= 'Function' then

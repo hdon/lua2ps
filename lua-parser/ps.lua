@@ -22,6 +22,7 @@ function PS:new(out)
     , roll          = { pop = 2 , push = 0 } -- TODO stack check of roll operand?
     , exch          = { pop = 2 , push = 2 }
     , eq            = { pop = 2 , push = 1 }
+    , exec          = { pop = 1 , push = 0 }
     , ['true']      = { pop = 0 , push = 1 }
     , ['false']     = { pop = 0 , push = 1 }
     , ['for']       = { pop = 4 , push = 0 }
@@ -40,6 +41,7 @@ function PS:new(out)
     , luaTableGet   = { pop = 2 , push = 1 }
     , luaTableSet   = { pop = 3 , push = 0 }
     , luaTableLength= { pop = 1 , push = 1 }
+    , luaNot        = { pop = 1 , push = 1 }
     }
   }, PS)
   if out ~= nil then
@@ -78,9 +80,11 @@ function PS:nudgeStackDepth(n)
   trace(string.format('stack depth change %d -> %d', x, self:getStackDepth()))
 end
 function PS:doStackFrame(fn)
+  trace(string.format('PS:doStackFrame() -> stack frame count  up  to %d', #self.stackDepth+1))
   self.stackDepth[#self.stackDepth+1] = 0
   fn(#self.stackDepth)
   self.stackDepth[#self.stackDepth] = nil
+  trace(string.format('PS:doStackFrame() -> stack frame count down to %d', #self.stackDepth))
 end
 
 -- Using a 'locals' table, which uses the __index metamethod to stack local variables
@@ -93,6 +97,7 @@ function PS:calculateStackIndexOfLocal(locals, localName)
   -- First check if the local exists
   assert(localProps ~= nil)
   dumpLocals2(locals)
+  self:dumpStack() -- whatever
   -- This is the index of the self.stackDepth that corresponds to the pseudo-frame of
   -- our search.
   local currentDepthFrame = #self.stackDepth
@@ -240,7 +245,7 @@ function PS:doFunction(numArgs, pos, fn)
   end
 
   self:doStackFrame(function()
-    self:write('{ {\n')
+    self:write('{ { {\n')
 
     -- Our function calling supports variadic argument, and we simplify things
     -- some by using PostScript's "mark" to delineate stack frames. Our function
@@ -259,7 +264,7 @@ function PS:doFunction(numArgs, pos, fn)
     fn()
 
     -- Close the function
-    self:write('} loop }\n')
+    self:write('} loop } }\n')
   end)
 
   -- Increment stack depth to account for the presence of the new function's
@@ -298,7 +303,7 @@ function PS:emitGlobalFunctionCall(id, numArgs, evalArg)
   -- stack for us, and leave us *exactly* one return value. We'll also emit a 'phony'
   -- for this return value.
   -- TODO support variadic return values.
-  self:write(self:makeGlobalIdentifier(id), '\n')
+  self:write(self:makeGlobalIdentifier(id), ' exec\n')
 
   -- The callee cleans the arguments and the mark we pushed for it, and returns exactly
   -- a single value.

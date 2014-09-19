@@ -152,6 +152,15 @@ false % disable trace output
 % natively in PostScript! As such, they must respect the lua2ps calling conventions
 % for Lua functions.
 
+% TODO move these into the __lua_G_math dict once lua2ps supports more varieties of call expression
+
+/luaReturn { counttomark 1 add 1 roll cleartomark } def % implement return value for current Lua calling convention
+/__lua_G_math_abs { abs luaReturn } def
+/__lua_G_math_floor { floor luaReturn } def
+/__lua_G_math_fmod { exch 1 index 1 index div truncate mul sub luaReturn } def
+% math.min() is vararg, but this implementation assumes at least one argument
+/__lua_G_math_min { { counttomark 1 eq { exch pop exit } if dup 2 index lt { exch } if pop } loop } def
+
 /__lua_G_print {
   {
     dup mark eq { pop exit } { == } ifelse
