@@ -13,20 +13,30 @@ for testscript in tests/* ; do
   echo
   echo Running test $TESTNAME
   # Run test with lua interpreter
+  echo lua ./$testscript \
+    \>  $TEMPDIR/lua2ps.$TESTNAME.stdout.lua \
+    2\> $TEMPDIR/lua2ps.$TESTNAME.stderr.lua &&
   lua ./$testscript \
     >  $TEMPDIR/lua2ps.$TESTNAME.stdout.lua \
     2> $TEMPDIR/lua2ps.$TESTNAME.stderr.lua &&
 
   # Translate test to PostScript
+  echo lua lua2ps.lua $testscript $TEMPDIR/lua2ps.$TESTNAME.ps \
+    \>  $TEMPDIR/lua2ps.$TESTNAME.stdout.trans \
+    2\> $TEMPDIR/lua2ps.$TESTNAME.stderr.trans &&
   lua lua2ps.lua $testscript $TEMPDIR/lua2ps.$TESTNAME.ps \
     >  $TEMPDIR/lua2ps.$TESTNAME.stdout.trans \
     2> $TEMPDIR/lua2ps.$TESTNAME.stderr.trans &&
   # Run the test in PostScript
+  echo gs -sDEVICE=nullpage -q $TEMPDIR/lua2ps.$TESTNAME.ps \
+    \>  $TEMPDIR/lua2ps.$TESTNAME.stdout.ps \
+    2\> $TEMPDIR/lua2ps.$TESTNAME.stderr.ps
   gs -sDEVICE=nullpage -q $TEMPDIR/lua2ps.$TESTNAME.ps \
     >  $TEMPDIR/lua2ps.$TESTNAME.stdout.ps \
     2> $TEMPDIR/lua2ps.$TESTNAME.stderr.ps
 
   # Any error?
+  PASSED=n
   if [ -s $TEMPDIR/lua2ps.$TESTNAME.stderr.lua ] ; then
     echo 'stderr from lua'
     cat $TEMPDIR/lua2ps.$TESTNAME.stderr.lua
@@ -41,16 +51,19 @@ for testscript in tests/* ; do
       else
         # Nothing on stderr! Compare results!
         if cmp -s $TEMPDIR/lua2ps.$TESTNAME.stdout.lua $TEMPDIR/lua2ps.$TESTNAME.stdout.ps ; then
-          echo Test passed!
+          PASSED=y
+          echo [1\;32mTest passed![0m
         else
-          echo Test failed!
-          echo 'stdout from lua'
+          echo $TEMPDIR/lua2ps.$TESTNAME.stdout.lua '(stdout from lua)'
           cat $TEMPDIR/lua2ps.$TESTNAME.stdout.lua
-          echo 'stdout from gs'
+          echo $TEMPDIR/lua2ps.$TESTNAME.stdout.ps '(stdout from gs)'
           cat $TEMPDIR/lua2ps.$TESTNAME.stdout.ps
         fi
       fi
     fi
+  fi
+  if [ $PASSED = n ] ; then
+    echo [1\;41mTest failed![0m
   fi
 
 done
