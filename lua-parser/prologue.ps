@@ -155,16 +155,63 @@ false % disable trace output
 % TODO move these into the __lua_G_math dict once lua2ps supports more varieties of call expression
 
 /luaReturn { counttomark 1 add 1 roll cleartomark } def % implement return value for current Lua calling convention
-/__lua_G_math_abs { abs luaReturn } def
-/__lua_G_math_floor { floor luaReturn } def
-/__lua_G_math_fmod { exch 1 index 1 index div truncate mul sub luaReturn } def
+/luaGet1Args { counttomark -1 roll counttomark 1 add 1 roll cleartomark } def
+/luaGet2Args { counttomark -2 roll counttomark 1 add 2 roll cleartomark } def
+/__lua_G_math_abs {{ luaGet1Args abs }} def
+/__lua_G_math_floor {{ luaGet1Args floor }} def
+/__lua_G_math_fmod {{ luaGet2Args exch 1 index 1 index div truncate mul sub }} def
 % math.min() is vararg, but this implementation assumes at least one argument
-/__lua_G_math_min { { counttomark 1 eq { exch pop exit } if dup 2 index lt { exch } if pop } loop } def
-
-/__lua_G_print {
+/__lua_G_math_min {{ { counttomark 1 eq { exch pop exit } if dup 2 index lt { exch } if pop } loop }} def
+% TODO check string length? Lua returns nil if index is out of string's bounds
+/__lua_G_string_byte {{ luaGet2Args exch 1 add get }} def
+% TODO check argument count
+/__lua_G_string_rep {{
+  luaGet2Args 
+  (2 args:) == pstack
+              % stack: n str
+  dup         % stack: n str str
+  length      % stack: n str #str
+  dup         % stack: n str #str #str
+  4 -1 roll   % stack: str #str #str n
+  mul         % stack: str #str #result
+  dup         % stack: str #str #result #result
+  string      % stack: str #str #result result
+  0           % stack: str #str #result result 0
+  4 2 roll    % stack: str result 0 #str #result
+  (entering for loop:) == pstack
   {
-    dup mark eq { pop exit } { == } ifelse
-  } loop
+    (in for loop:) == pstack
+              % stack: str result index
+    2 index   % stack: str result index str
+    2 index   % stack: str result index str result
+    3 1 roll  % stack: str result result index str
+    putinterval %    : str result
+  } for
+  exch        % stack: mark result str
+  3 2 roll    % stack: result str mark
+  pop pop     % stack: result
+}} def
+
+/luaPrintBuffer 1024 string def
+/luaPrintHelper {
+  dup type (stringtype) eq {print}
+  {
+    dup type (nulltype) eq {pop (nil) print}
+    {
+      luaPrintBuffer cvs print
+    } ifelse
+  } ifelse
+} def
+/__lua_G_print {
+  dup mark eq { pop exit }
+  {
+    luaPrintHelper
+    {
+      dup mark eq { pop exit } if
+      (\t) print luaPrintHelper
+    } loop
+  } ifelse
+  (\n) print
   null % current Lua calling convention requires exactly one return value
 } def
 
