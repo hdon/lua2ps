@@ -36,7 +36,7 @@ for testscript in $TESTS ; do
   # Run the test in PostScript
   echo gs -sDEVICE=nullpage -q $TEMPDIR/lua2ps.$TESTNAME.ps \
     \>  $TEMPDIR/lua2ps.$TESTNAME.stdout.ps \
-    2\> $TEMPDIR/lua2ps.$TESTNAME.stderr.ps
+    2\> $TEMPDIR/lua2ps.$TESTNAME.stderr.ps &&
   gs -sDEVICE=nullpage -q $TEMPDIR/lua2ps.$TESTNAME.ps \
     >  $TEMPDIR/lua2ps.$TESTNAME.stdout.ps \
     2> $TEMPDIR/lua2ps.$TESTNAME.stderr.ps
