@@ -1,7 +1,7 @@
 #!/bin/bash
 TEMPDIR=/tmp
 export LUA_CPATH='/mnt/oih/hdon/src/hg/lua2ps/lpeg/?.so'
-export LUA_PATH='/mnt/oih/hdon/src/hg/lua2ps/lua-parser/?.lua'
+export LUA_PATH='/mnt/oih/hdon/src/hg/lua2ps/?.lua;/mnt/oih/hdon/src/hg/lua2ps/lua-parser/?.lua'
 
 if [ $# = 0 ] ; then
   TESTS=tests/*
