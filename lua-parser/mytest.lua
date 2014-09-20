@@ -252,6 +252,12 @@ function lua2ps(ast, locals)
     lua2ps(ast[1], locals)
     -- Emit 'exec' PostScript operator to invoke our function
     ps:emit('exec', string.format('%% make call to "%s()"', calleeDescription))
+    -- 'exec' is one of the blind-spots in our PostScript emitter. We need to perform
+    -- some bookkeeping here on its behalf, which means we must account for the callee's
+    -- cleaning up of its stack frame, and we must also account for its return value.
+    -- Presently, every function is restricted to *exactly* one return value (nil being
+    -- the default used in place of no return value.)
+    ps:nudgeStackDepth(-#ast)
 
   -- Table node
   elseif ast.tag == 'Table' then
