@@ -3,11 +3,17 @@ TEMPDIR=/tmp
 export LUA_CPATH='/mnt/oih/hdon/src/hg/lua2ps/lpeg/?.so'
 export LUA_PATH='/mnt/oih/hdon/src/hg/lua2ps/lua-parser/?.lua'
 
+if [ $# = 0 ] ; then
+  TESTS=tests/*
+else
+  TESTS=$@
+fi
+
 # Clean up previous test results
 rm -f $TEMPDIR/lua2ps*
 
 # Run test procedure for each test
-for testscript in tests/* ; do
+for testscript in $TESTS ; do
   TESTNAME=`basename $testscript`
 
   echo
