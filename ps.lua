@@ -22,6 +22,7 @@ function PS:new(out)
     , roll          = { pop = 2 , push = 0 } -- TODO stack check of roll operand?
     , exch          = { pop = 2 , push = 2 }
     , eq            = { pop = 2 , push = 1 }
+    , lt            = { pop = 2 , push = 1 }
     , exec          = { pop = 0 , push = 0 } -- TODO this is bs
     , ['true']      = { pop = 0 , push = 1 }
     , ['false']     = { pop = 0 , push = 1 }

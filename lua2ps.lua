@@ -192,7 +192,13 @@ function lua2ps(ast, locals)
         ps:emit('luaToString')
         -- Emit concatenation
         ps:emit('luaStrConcat')
-      else error("unknown binary lua operator") end
+      -- 'lt' seems to be both < and >, but with operands switched for >, i guess
+      elseif ast[1] == 'lt' then
+        -- Emit operands
+        lua2ps(ast[2], locals)
+        lua2ps(ast[3], locals)
+        ps:emit('lt')
+      else error(string.format('unknown binary lua operator: "%s"', ast[1])) end
 
     elseif #ast == 2 then -- We have a unary operator
       -- emit operand
