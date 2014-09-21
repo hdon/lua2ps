@@ -151,7 +151,7 @@ false % disable trace output
 % Some utils i guess TODO is there a better approach to this?
 /luaFooBuf 1024 string def
 % Implementation of Lua's automatic string coercion
-/luaToStr {
+/luaToString {
   dup type (stringtype) ne {
                     % stack: any
     luaFooBuf       % stack: any str
