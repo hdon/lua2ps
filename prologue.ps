@@ -148,6 +148,42 @@ false % disable trace output
     ifelse
 } def
 
+% Some utils i guess TODO is there a better approach to this?
+/luaFooBuf 1024 string def
+% Implementation of Lua's automatic string coercion
+/luaToStr {
+  dup type (stringtype) ne {
+                    % stack: any
+    luaFooBuf       % stack: any str
+    cvs             % stack: substr
+    dup             % stack: substr substr
+    length          % stack: substr #substr
+    string          % stack: substr result
+    dup             % stack: substr result result
+    3 1 roll        % stack: result substr result
+    cvs             % stack: result substr2
+    pop
+  } if
+} def
+
+% Implementation of Lua's string concatenation operator ("..")
+/luaStrConcat {
+                    % stack: s1 s2
+  dup length        % stack: s1 s2 #s2
+  2 index length    % stack: s1 s2 #s2 #s1
+  add string        % stack: s1 s2 s3
+  % dest index string | putinterval | -
+  dup 0             % stack: s1 s2 s3 s3 0
+  4 index           % stack: s1 s2 s3 s3 0 s1
+  putinterval       % stack: s1 s2 s3
+  dup               % stack: s1 s2 s3 s3
+  3 index length    % stack: s1 s2 s3 s3 #s1
+  3 index           % stack: s1 s2 s3 s3 #s1 s2
+  putinterval       % stack: s1 s2 s3
+  3 1 roll          % stack: s3 s1 s2
+  pop pop           % stack: s3
+} def
+
 % These are magic functions which can be called by Lua, but which are implemented
 % natively in PostScript! As such, they must respect the lua2ps calling conventions
 % for Lua functions.
