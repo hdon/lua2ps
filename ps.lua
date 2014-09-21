@@ -13,6 +13,7 @@ function PS:new(out)
       index         = { pop = 1 , push = 1 }
     , mul           = { pop = 2 , push = 1 }
     , add           = { pop = 2 , push = 1 }
+    , sub           = { pop = 2 , push = 1 }
     , null          = { pop = 0 , push = 1 }
     , put           = { pop = 3 , push = 0 }
     , dup           = { pop = 1 , push = 2 }

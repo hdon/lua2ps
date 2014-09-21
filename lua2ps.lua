@@ -198,6 +198,11 @@ function lua2ps(ast, locals)
         lua2ps(ast[2], locals)
         lua2ps(ast[3], locals)
         ps:emit('lt')
+      elseif ast[1] == 'sub' then
+        -- Emit operands
+        lua2ps(ast[2], locals)
+        lua2ps(ast[3], locals)
+        ps:emit('sub')
       else error(string.format('unknown binary lua operator: "%s"', ast[1])) end
 
     elseif #ast == 2 then -- We have a unary operator
