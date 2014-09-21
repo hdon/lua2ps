@@ -168,16 +168,30 @@ function lua2ps(ast, locals)
   elseif ast.tag == 'Op' then
     assert(#ast > 0)
     if #ast == 3 then -- We have a binary operator
-      -- Emit operands
-      lua2ps(ast[2], locals)
-      lua2ps(ast[3], locals)
       -- emit operator
       if ast[1] == 'mul' then
+        -- Emit operands
+        lua2ps(ast[2], locals)
+        lua2ps(ast[3], locals)
         ps:emit('mul')
       elseif ast[1] == 'add' then
+        -- Emit operands
+        lua2ps(ast[2], locals)
+        lua2ps(ast[3], locals)
         ps:emit('add')
       elseif ast[1] == 'eq' then
+        -- Emit operands
+        lua2ps(ast[2], locals)
+        lua2ps(ast[3], locals)
         ps:emit('eq')
+      elseif ast[1] == 'concat' then
+        -- Emit operands, and coerce them to strings
+        lua2ps(ast[2], locals)
+        ps:emit('luaToString')
+        lua2ps(ast[3], locals)
+        ps:emit('luaToString')
+        -- Emit concatenation
+        ps:emit('luaStrConcat')
       else error("unknown binary lua operator") end
 
     elseif #ast == 2 then -- We have a unary operator

@@ -41,6 +41,10 @@ function PS:new(out)
     , luaTableGet   = { pop = 2 , push = 1 }
     , luaTableSet   = { pop = 3 , push = 0 }
     , luaTableLength= { pop = 1 , push = 1 }
+    -- string stuff
+    , luaToString   = { pop = 1 , push = 1 }
+    , luaStrConcat  = { pop = 2 , push = 1 }
+    -- whatever
     , luaNot        = { pop = 1 , push = 1 }
     }
   }, PS)
