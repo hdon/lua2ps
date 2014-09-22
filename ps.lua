@@ -400,9 +400,13 @@ function PS:emitProcs(numProcs, user, push, fn)
   end
 
   -- Save the stack depth after accounting for 'user'. We'll make sure that each proc begins
-  -- with this stack depth, and ends with the proper stack depth.
-  local procStartStackDepth = self:getStackDepth() + numProcs - userOperator.pop
+  -- with this stack depth, and ends with the proper stack depth. TODO right now I can't think
+  -- of any PostScript operators that execute procs which push anything, but if they did, would
+  -- they be pushed here, or after the procs execute? For now, it will be here.
+  local procStartStackDepth = self:getStackDepth() + numProcs - userOperator.pop + userOperator.push
   local procFinStackDepth = procStartStackDepth + push
+  trace(string.format('emitProcs() finds proc statck depth init=%d fin=%d',
+    procStartStackDepth, procFinStackDepth))
 
   -- Now we'll emit 'numProcs' procs
   for iProc = 1, numProcs do
@@ -427,11 +431,13 @@ function PS:emitProcs(numProcs, user, push, fn)
     self:write('}')
   end
 
-  -- Undo our last override, and factor in 'numProcs' and 'push'
-  self:overrideStackDepth(procFinStackDepth + numProcs + numProcs + userOperator.pop)
+  self:overrideStackDepth(procStartStackDepth + userOperator.push)
 
-  -- Emit the operator that uses the procs we've pushed.
-  self:emit(user)
+  -- Emit the operator that uses the procs we've pushed. Bypass PS:emit() because we've
+  -- already done its stack bookkeeping.
+  self:write(user, '\n')
+
+  -- Stack should already be where it needs to be, thanks to the check against procFinStackDepth.
 end
 
 function PS:emitString(s)
