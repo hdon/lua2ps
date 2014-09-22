@@ -1,0 +1,17 @@
+function foo(b)
+  print(b or true)
+  print(b or false)
+  print(b or 0)
+  print(b or 1)
+  print(b or nil)
+  print(b or '')
+  print(b or 'ok')
+end
+
+foo(true)
+foo(false)
+foo(0)
+foo(1)
+foo(nil)
+foo('')
+foo('ok')
