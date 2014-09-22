@@ -213,6 +213,26 @@ function lua2ps(ast, locals)
         lua2ps(ast[2], locals)
         lua2ps(ast[3], locals)
         ps:emit('div')
+      elseif ast[1] == 'or' then
+        -- Evaluate first operand, dup it, and coerce the dup to bool, and then invert it
+        lua2ps(ast[2], locals)
+        ps:emit('dup', 'luaToBool', 'not')
+        -- Then emit an {}if construct
+        ps:emitProcs(1, 'if', 0, function()
+          -- Our first operand evaluated falsy, so let's pop it and evaluate our second operand
+          ps:emit('pop', '% popping first "or" operand because it\'s falsy')
+          lua2ps(ast[3], locals)
+        end)
+      elseif ast[1] == 'and' then
+        -- Evaluate first operand, dup it, and coerce the dup to bool
+        lua2ps(ast[2], locals)
+        ps:emit('dup', 'luaToBool')
+        -- Then emit an {}if construct
+        ps:emitProcs(1, 'if', 0, function()
+          -- Our first operand evaluated falsy, so let's pop it and evaluate our second operand
+          ps:emit('pop', '% popping first "and" operand because it\'s truthy')
+          lua2ps(ast[3], locals)
+        end)
       else error(string.format('unknown binary lua operator: "%s"', ast[1])) end
 
     elseif #ast == 2 then -- We have a unary operator
@@ -223,8 +243,8 @@ function lua2ps(ast, locals)
         -- emit PostScript for #tbl operation
         ps:emit('luaTableLength')
       elseif ast[1] == 'not' then
-        -- emit 'not' implementation from prologue.ps
-        ps:emit('luaNot')
+        -- emit boolean coercion operator from prologue.ps, then PostScript not operator
+        ps:emit('luaToBool', 'not')
       else error('unknown unary lua operator: ' .. ast[1]) end
     else error(string.format(
     'Known operators are binary or unary, but found "%s" operator with %d operands!', ast[1], #ast))

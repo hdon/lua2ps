@@ -134,20 +134,6 @@ false % disable trace output
   (luaLength) get
 } def
 
-% Implementation of Lua's "not" operator. Note: In PostScript we use 'null' to represent
-% Lua's 'nil' value. Lua's logical operators consider 'false' and 'nil' as its only falsy
-% values.
-/luaNot {
-  dup false eq
-    { pop true }
-    { null eq
-      { true }
-      { false }
-      ifelse
-    }
-    ifelse
-} def
-
 % Some utils i guess TODO is there a better approach to this?
 /luaFooBuf 1024 string def
 % Implementation of Lua's automatic string coercion
@@ -183,6 +169,9 @@ false % disable trace output
   3 1 roll          % stack: s3 s1 s2
   pop pop           % stack: s3
 } def
+
+% coercion to Lua bool type (only falsy Lua values: false, nil)
+/luaToBool { dup type (booleantype) ne { null ne } if } def
 
 % These are magic functions which can be called by Lua, but which are implemented
 % natively in PostScript! As such, they must respect the lua2ps calling conventions
@@ -239,7 +228,7 @@ false % disable trace output
   } ifelse
 } def
 /__lua_G_print {
-  dup mark eq { pop exit }
+  dup mark eq { pop }
   {
     luaPrintHelper
     {

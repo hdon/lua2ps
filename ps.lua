@@ -26,8 +26,12 @@ function PS:new(out)
     , eq            = { pop = 2 , push = 1 }
     , lt            = { pop = 2 , push = 1 }
     , exec          = { pop = 0 , push = 0 } -- TODO this is bs
+    , exit          = { pop = 0 , push = 0 } -- wat
     , ['true']      = { pop = 0 , push = 1 }
     , ['false']     = { pop = 0 , push = 1 }
+    , ['or']        = { pop = 2 , push = 1 }
+    , ['and']       = { pop = 2 , push = 1 }
+    , ['not']       = { pop = 1 , push = 1 }
     , ['for']       = { pop = 4 , push = 0 }
     , ['if']        = { pop = 2 , push = 0 }
     , ['ifelse']    = { pop = 3 , push = 0 }
@@ -48,7 +52,7 @@ function PS:new(out)
     , luaToString   = { pop = 1 , push = 1 }
     , luaStrConcat  = { pop = 2 , push = 1 }
     -- whatever
-    , luaNot        = { pop = 1 , push = 1 }
+    , luaToBool     = { pop = 1 , push = 1 }
     }
   }, PS)
   if out ~= nil then
@@ -85,6 +89,10 @@ function PS:nudgeStackDepth(n)
   local x = self:getStackDepth()
   self.stackDepth[#self.stackDepth] = n + self.stackDepth[#self.stackDepth]
   trace(string.format('stack depth change %d -> %d', x, self:getStackDepth()))
+end
+function PS:overrideStackDepth(n)
+  trace(string.format('stack depth OVERRD %d -> %d', self:getStackDepth(), n))
+  self.stackDepth[#self.stackDepth] = n
 end
 function PS:doStackFrame(fn)
   trace(string.format('PS:doStackFrame() -> stack frame count  up  to %d', #self.stackDepth+1))
@@ -371,6 +379,56 @@ function PS:doBlockScope(fn, numProcs, user)
   -- Adjust the stack to undo our previous stack nudge, as the change will be made by emit()
   -- I could just bypass emit() I guess...
   self:nudgeStackDepth(userOperator.pop)
+
+  -- Emit the operator that uses the procs we've pushed.
+  self:emit(user)
+end
+
+function PS:emitProcs(numProcs, user, push, fn)
+  -- We're emitting procs here. That means the stack state needs to conform to the state
+  -- it will be in when the procs will be entered (that is, after the PostScript operator
+  -- specified in our 'user' argument consumes its operands!)
+  -- First, fetch info about the operator.
+  local userOperator = self.psCommands[user]
+  if userOperator == nil then
+    error(string.format('Unknown PostScript operator: "%s"', user))
+  end
+
+  -- Make sure the 'user' operator will consume all the procs being specified.
+  if numProcs >= userOperator.pop then
+    error(string.format('"%s" operator does not consume %d procs, only %d', user, numProcs, userOperator.pop))
+  end
+
+  -- Save the stack depth after accounting for 'user'. We'll make sure that each proc begins
+  -- with this stack depth, and ends with the proper stack depth.
+  local procStartStackDepth = self:getStackDepth() + numProcs - userOperator.pop
+  local procFinStackDepth = procStartStackDepth + push
+
+  -- Now we'll emit 'numProcs' procs
+  for iProc = 1, numProcs do
+    -- Override current stack depth!
+    self:overrideStackDepth(procStartStackDepth)
+
+    -- Emit curly brace to begin PostScript proc
+    self:write('{')
+
+    -- Call 'fn' to allow our caller to process the contents of the block
+    fn(iProc)
+    -- We're at the end of our PostScript proc, and we need ensure that the stack depth is
+    -- in the state expected at the beginning of the proc, less whatever PostScript will be
+    -- putting on the stack for us. Block node processing should take care of it for us,
+    -- but let's verify that it did its job correctly.
+    if self:getStackDepth() ~= procFinStackDepth then
+      error(string.format('Block mismanged PostScript operand stack by %d operands',
+        self:getStackDepth() - procFinStackDepth))
+    end
+
+    -- Emit curly brace to close PostScript proc
+    self:write('}')
+  end
+
+  -- Undo our last override, and factor in 'numProcs' and 'push'
+  self:overrideStackDepth(procFinStackDepth + numProcs + numProcs + userOperator.pop)
 
   -- Emit the operator that uses the procs we've pushed.
   self:emit(user)
