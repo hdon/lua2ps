@@ -164,6 +164,11 @@ function lua2ps(ast, locals)
   elseif ast.tag == 'False' then
     ps:emit('false', string.format('%% pos=%s', tostring(ast.pos)))
 
+  -- Paren node
+  elseif ast.tag == 'Paren' then
+    assert(#ast == 1)
+    lua2ps(ast[1], locals)
+
   -- Op node
   elseif ast.tag == 'Op' then
     assert(#ast > 0)
@@ -203,6 +208,11 @@ function lua2ps(ast, locals)
         lua2ps(ast[2], locals)
         lua2ps(ast[3], locals)
         ps:emit('sub')
+      elseif ast[1] == 'div' then
+        -- Emit operands
+        lua2ps(ast[2], locals)
+        lua2ps(ast[3], locals)
+        ps:emit('div')
       else error(string.format('unknown binary lua operator: "%s"', ast[1])) end
 
     elseif #ast == 2 then -- We have a unary operator
@@ -331,6 +341,22 @@ function lua2ps(ast, locals)
     lua2ps(ast[2], locals)
     -- Finally, we emit the code to evaluate the Index operation.
     ps:emit('luaTableGet')
+
+  -- While node
+--elseif ast.tag == 'While' then
+--  assert(#ast == 2 and ast[2].tag == 'Block')
+--  -- We'll just create a fake Block node and use ps:doBlockScope
+--  -- TODO document why this works i guess
+--  ps:doBlockScope(function()
+--    local fakeNode = {tag='Block'}
+--    fakeNode[1] = ast[1]
+--    for i = 1, #ast[2] do
+--      fakeNode[i+1] = ast[2][i]
+--    end
+--    -- evaluate while loop condition
+--    lua2ps(ast[1], locals)
+--    block2ps({tag='Block'
+--  end)
 
   -- Fornum node
   -- NOTE: The order in which the for loop parameter's expressions are evaluated
