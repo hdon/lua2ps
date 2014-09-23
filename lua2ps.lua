@@ -402,10 +402,29 @@ function lua2ps(ast, locals)
     -- We wrap the call to block2ps() in ps:doBlockScope() to help construct the
     -- Block on the PostScript side.
     ps:doBlockScope(function()
-      -- ast[1][1] should be a string containing our iterator variable name
-      block2ps(ast[#ast], ast, locals, { [ast[1][1]] = { indexFromBottom = 0 } })
+      -- We have two new locals. ast[1][1] should be a string containing our
+      -- iterator variable name. We also have a fake local, "*loopBase," also with
+      -- indexFromBottom=0, which can be used to unwind the stack when a Break
+      -- statement is encountered. block2ps() will install the latter for us
+      -- if we supply its name.
+      block2ps(ast[#ast], ast, locals, { [ast[1][1]] = { indexFromBottom = 0 }}, '*loopBase')
     end, 1, 'for')
     ps:emit('% Fornum loop pos=' .. tostring(ast.pos))
+
+  -- Break node
+  elseif ast.tag == 'Break' then
+    -- At the beginning of a loop, we store a fake local, '*loopBase,' which fancies
+    -- itself the premier stack allocation of the loop. Using this, we can calculate
+    -- the depth of the stack between its present state in execution of the loop, and
+    -- the beginning/end of the loop, allowing us to emit code to correctly clean up
+    -- our locals.
+    for i = 0, ps:calculateStackIndexOfLocal(locals, '*loopBase') do
+      -- Bypass the emitter. The emitter doesn't know where our loop begins, or what
+      -- exiting from the loop would be like, and it doesn't have the machinery that
+      -- we do to keep track of something like '*loopBase.'
+      ps:write('pop % cleaning up locals for "break"\n')
+    end
+    ps:emit('exit', '% "break"')
 
   -- If node
   elseif ast.tag == 'If' then
@@ -566,7 +585,7 @@ function doAssignments(ast, locals)
 end
 
 -- A simple helper for lua2ps
-function block2ps(ast, parent, locals, newLocals)
+function block2ps(ast, parent, locals, newLocals, stackBookmark)
   assert(ast.tag == 'Block')
   -- When we visit a Block node, we need a place to to store our locals,
   -- and via the '__table' metamethod, it also provides the facility
@@ -587,6 +606,12 @@ function block2ps(ast, parent, locals, newLocals)
       ps:emit('phony', '% for ' .. localName)
     end
   end
+  -- If we have a stackBookmark, we install it without adjusting the stack,
+  -- as a local with indexFromBottom = 0. It can be used for finding a
+  -- specific spot in the stack.
+  if stackBookmark ~= nil then
+    newLocals[stackBookmark] = { indexFromBottom = 0 }
+  end
   -- Set up the __index metamethod for the new locals table so that our
   -- enclosing scopes are accessible, and respecting of variable shadowing,
   -- via the locals table we will pass to recursive visits to this node's
@@ -605,8 +630,11 @@ function block2ps(ast, parent, locals, newLocals)
     -- This loop only visits locals which belong specifically to our
     -- locals, not locals we inherit from enclosing scopes!
     for localName, localProps in pairs(newLocals) do
-      ps:emit('pop', string.format('%% cleaning up locals (maybe "%s", index from bottom of stack = %s)',
-        localName, tostring(localProps.indexFromBottom)))
+      -- Don't pop our bookmark!
+      if localName ~= stackBookmark then
+        ps:emit('pop', string.format('%% cleaning up locals (maybe "%s", index from bottom of stack = %s)',
+          localName, tostring(localProps.indexFromBottom)))
+      end
       localProps.stackDepth = -1 -- invalidate local
     end
   end
