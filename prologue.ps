@@ -227,7 +227,7 @@ false % disable trace output
     } ifelse
   } ifelse
 } def
-/__lua_G_print {
+/__lua_G_print { {
   dup mark eq { pop }
   {
     luaPrintHelper
@@ -238,7 +238,7 @@ false % disable trace output
   } ifelse
   (\n) print
   null % current Lua calling convention requires exactly one return value
-} def
+} } def
 
 % This is used by the PostScript emitter in the lua2ps translator to handle implicit
 % local variables. A PostScript optimizer I am dreaming up will remove this automatically
