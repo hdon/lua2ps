@@ -293,8 +293,14 @@ function PS:emitFunctionReturn(numReturns, pos)
   -- Right now we only support exactly one return value! TODO
   assert(numReturns == 1)
   -- We're going to use the PostScript 'mark' feature to unwind our stack frame.
-  -- But we must first roll our return values under the mark.
+  -- But we must first roll our return values under the mark. Bypass the emitter
+  -- which doesn't know how to deal with this.
   self:write(string.format('counttomark 1 add 1 roll cleartomark exit %% return pos=%d\n', pos))
+  -- ..but we do have to do our own stack bookkeeping. The serial nature of the
+  -- PostScript proc requires us to pop our return value here, otherwise at
+  -- the end of our block, which should be right now, we'll still have one thing
+  -- on the stack, according to self.stackDepth.
+  self:nudgeStackDepth(-1)
 end
 
 function PS:emitGlobalFunctionCall(id, numArgs, evalArg)
