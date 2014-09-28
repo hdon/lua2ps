@@ -27,7 +27,7 @@ local ps = PS:new(dest)
 -- Arguments:
 --   ast:         A syntax node
 --   locals:      The locals table
-function lua2ps(ast, locals)
+function lua2ps(ast, locals, numReturnValues)
   indent = indent + 2
   trace(string.format('visiting %s node @ %s', tostring(ast.tag), tostring(ast.pos)))
   --dumpLocals(locals)
@@ -37,18 +37,7 @@ function lua2ps(ast, locals)
     -- The Block has one child for each statement
     -- Descend into those nodes
     for _, child in ipairs(ast) do
-      lua2ps(child, locals)
-      -- This part would be straightforward, but we have to pop anything off
-      -- the stack the Lua code throws away. Since we have restricted functions
-      -- to exactly a single return value, and nil (null on PostScript side) is
-      -- put on the stack by a function with no return value, this means that
-      -- we specifically need to look for Call nodes that are immediate children
-      -- of any Block node, and be sure to pop their return value. I believe that
-      -- anywhere else a Call node is found, the return value is consumed and we
-      -- don't have to worry about it.
-      if child.tag == 'Call' then
-        ps:emit('pop', '% discard function call return value')
-      end
+      lua2ps(child, locals, 0)
     end
 
   -- Function node
@@ -87,7 +76,8 @@ function lua2ps(ast, locals)
       -- very end of our function, so we'll make sure to clean up the stack frame
       -- here and return from the function. Since we only support *exactly* one
       -- function return value, we'll return nil, or null in PostScript.
-      lua2ps({tag='Return', {tag='Nil'}}, locals)
+      -- XXX don't need this anymore? lua2ps({tag='Return'}, locals)
+      ps:write('cleartomark mark exit % end-of-function, return nothing!\n')
     end)
 
   -- Localrec node
@@ -115,19 +105,23 @@ function lua2ps(ast, locals)
 
   -- Local node
   elseif ast.tag == 'Local' then
-    -- This is not legal in Lua: local a = 'a', b = 'b'
-    -- This is what you want:    local a, b = 'a', 'b'
-    -- All of the lvalues precede all of the rvalues
-    -- We should have two children, a NameList and an ExpList
-    assert(#ast == 2)
-    assert(ast[1].tag == 'NameList')
-    assert(ast[2].tag == 'ExpList')
-    -- Let's keep our lives simple for now and assume that
-    -- our ExpList won't be longer than our NameList
-    assert(#ast[1] >= #ast[2])
-    -- Let's create new locals from the child nodes of our
-    -- NameList node, which should all be tagged Id
-    for _, idNode in ipairs(ast[1]) do
+    -- In Lua assignments, you have a list of lvalues, and optionally a list of rvalues.
+    -- The assignments are made one-to-one, with the following caveats:
+    -- 1) A Call that occurs at the end of the list contributes all of its return values
+    --    to the assignment.
+    -- 2) Lvalues that exceed the number of available rvalues are set to nil.
+    -- 3) Rvalues that exceed the number of available lvalues are discarded.
+    -- Our calling convention requires that function arguments push the first argument
+    -- onto the stack last, and since these "varargs list" semantics are the same for
+    -- assignments as well as the argument passing, 
+
+    -- We should have one or two children, a NameList and optionally an ExpList.
+    assert((#ast == 1 or (#ast == 2 and ast[2].tag == 'ExpList')) and ast[1].tag == 'NameList')
+
+    -- Let's allocate stack and emit an initial value of nil for each of our new locals.
+    -- We'll allocate stack for our locals in last-to-first order as described above.
+    for i = #ast[1], 1, -1 do
+      local idNode = ast[1][i]
       assert(idNode.tag == 'Id')
       assert(#idNode == 1)
       assert('string' == type(idNode[1]))
@@ -135,11 +129,6 @@ function lua2ps(ast, locals)
       locals[idNode[1]] = {
         indexFromBottom = ps:getStackDepth()
       }
-      -- Here we push nil (null in PostScript) onto the stack. Right now
-      -- doAssignments() will use PostScript roll and pop to remove the
-      -- null and replace it with whatever is assigned to it, if there is
-      -- a value specified in the Lua local statement. TODO Either optimize
-      -- this here, or do it in the PostScript optimizer.
       ps:emit('null', string.format('%% assign nil by default to local "%s"', idNode[1]))
     end
     -- Evaluate rvalues and assign them to our locals!
@@ -167,7 +156,9 @@ function lua2ps(ast, locals)
   -- Paren node
   elseif ast.tag == 'Paren' then
     assert(#ast == 1)
-    lua2ps(ast[1], locals)
+    -- Putting a call inside parens enforces the "comma rule," so request 1 return value,
+    -- which only applies to Call nodes, and has no effect on other nodes.
+    lua2ps(ast[1], locals, 1)
 
   -- Op node
   elseif ast.tag == 'Op' then
@@ -279,17 +270,46 @@ function lua2ps(ast, locals)
 
   -- Return node
   elseif ast.tag == 'Return' then
-    -- Right now we only support single return values
-    assert(#ast == 1)
-    -- Descend into our return value
-    lua2ps(ast[1], locals)
-    -- Emit function return code TODO support other numbers of return values
-    ps:emitFunctionReturn(1, ast.pos)
+    -- Evaluate our list of return value expressions in last-to-first order.
+    -- XXX This is probably not what Lua does.
+    ps:emit('mark', '% constructing return frame')
+    for i = #ast, 1, -1 do
+      -- In Lua, individual return value expressions, elements in the list of
+      -- expressions that are the parameters to the return statement, are all
+      -- coerced to exactly one value, except for the very last one, whose size
+      -- is unbound.
+      local requestNumReturnValues
+      if i == #ast then
+        requestNumReturnValues = math.huge
+      else
+        requestNumReturnValues = 1
+      end
+      lua2ps(ast[i], locals, requestNumReturnValues)
+    end
+    -- Emit function return code
+    trace(':D :D :D return #ast =', #ast)
+    -- Bypass PS:emit() stack bookkeeping for return value list
+    ps:write(
+      'counttomark dup 2 add -1 roll pop counttomark 1 sub dup 2 index  % return code\n'
+    ..'sub -1 1 {pop pop} 5 index 6 add 4 roll 4 add exch roll for exit % return code\n'
+    )
 
   -- Call node
   elseif ast.tag == 'Call' then
     -- Our first child is the callee.
     assert(#ast >= 1)
+    -- With unbound varargs, the static analysis done by the stack emitter becomes useless, because
+    -- it only works with integers, and has no primitives for arithmetic with variables. If it did,
+    -- we could nudge the stack by "x" representing the unbound return value list of the call, and
+    -- then reverse the nudge by "x" later. However, absent any "x," we must override the emitter's
+    -- stack bookkeeping. Perhaps then it is foolish not to use this technique all the time, but it
+    -- is there to catch mistakes early when possible, so we'll use it if we can.
+    local overrideStackDepth
+    -- XXX Please see XXX below for explanation
+    -- XXX if numReturnValues == math.huge then
+      overrideStackDepth = ps:getStackDepth()
+    -- XXX end
+
     -- Give some good name to our callee, for diagnostic purposes
     local calleeDescription
     if ast[1].tag == 'Id' then
@@ -300,19 +320,66 @@ function lua2ps(ast, locals)
     -- Emit a PostScript 'mark,' as per our calling convention
     ps:emit('mark', string.format('%% setting up call for "%s()"', calleeDescription))
     -- Evaluate our arguments in right-to-left order
-    for i = #ast-1, 1, -1 do
-      lua2ps(ast[i+1], locals)
+    for i = #ast, 2, -1 do
+      local requestNumReturnValues
+      if i == #ast then
+        requestNumReturnValues = math.huge
+      else
+        requestNumReturnValues = 1
+      end
+      lua2ps(ast[i], locals, requestNumReturnValues)
     end
     -- Evaluate our callee expression
     lua2ps(ast[1], locals)
     -- Emit 'exec' PostScript operator to invoke our function
     ps:emit('exec', string.format('%% make call to "%s()"', calleeDescription))
-    -- 'exec' is one of the blind-spots in our PostScript emitter. We need to perform
-    -- some bookkeeping here on its behalf, which means we must account for the callee's
-    -- cleaning up of its stack frame, and we must also account for its return value.
-    -- Presently, every function is restricted to *exactly* one return value (nil being
-    -- the default used in place of no return value.)
-    ps:nudgeStackDepth(-#ast)
+    -- Our call site is responsible for determining what is done with return values,
+    -- and will inform us via numReturnValues.
+    if numReturnValues == nil then
+      error('Parent node must request the wanted number of return values')
+    elseif numReturnValues == math.huge then
+      -- Retain all return values. Let's just roll the return values under the mark
+      -- delineating the return values, and pop it.
+      ps:write('counttomark 1 add -1 roll pop % retain all return values\n')
+    elseif numReturnValues == 0 then
+      -- Discard all return values -- really simple
+      ps:write('cleartomark % discard all return values\n')
+    elseif numReturnValues > 0 and numReturnValues < math.huge then
+      -- Keep a specific number of return values. Discard or push nils (nulls) until
+      -- we have the right amount.
+      ps:write(string.format(
+        'counttomark %d gt                             %% compare num retvals w/ num wanted (%d)\n'
+      ..'{ counttomark 1 add %d roll cleartomark }     %% discard some return values\n'
+      ..'{ counttomark 1 %d { null exch 1 add 1 roll } %% add extra...                     \n'
+      ..'  3 index 5 add -1 roll pop for } ifelse      %%          ... return values!\n'
+      , numReturnValues , numReturnValues , numReturnValues , numReturnValues
+      ))
+    else
+      error('internal: function call sites must request number of return values')
+    end
+    -- XXX XXX XXX
+    -- I am cheating here.
+    -- I liked that PS could keep track of my stack for me.
+    -- But Lua's "varargs" features make this info impossible to know AOT without some more
+    -- serious static analysis, and even then it may not be possible to know AOT without just
+    -- running the program. As a result, I am going to cheat here. Oh well.
+    --
+    -- We need to pick up the slack for the emitter here, I guess. Let's account for:
+    -- popping the arguments to our call, the PostScript proc containing our function,
+    -- and the PostScript mark delineating the call frame, and pushing the return values
+    -- from the function. The mark delineating the return frame was pushed by the callee
+    -- and has already been popped. BUT in the case of unbound return value list, we
+    -- use the override mechanism to cheat. See declaration of 'overrideStackDepth' above.
+  --if overrideStackDepth == nil then
+  --  ps:nudgeStackDepth(
+  --    numReturnValues     -- Number of return values XXX This doesn't work for "retain all return values"
+  --  - #ast                -- Number of arguments, plus the function's proc
+  --  - 1                   -- The mark delineating the call frame
+  --  + 1                   -- The 'exec' already popped the callee C:
+  --)
+  --else
+      ps:overrideStackDepth(overrideStackDepth)
+  --end
 
   -- Table node
   elseif ast.tag == 'Table' then
@@ -505,7 +572,7 @@ function dumpLocals2(locals)
       none = false
     end
     if none then
-      trace(string.format('locals[%d]> none', n))
+      trace(string.format('locals[%d]> no locals in this scope', n))
     end
     locals = getmetatable(locals)
     if locals == nil then break end
@@ -533,29 +600,46 @@ function doAssignments(ast, locals)
       or ast.tag == 'Set'   and ast[1].tag == nil and ast[2].tag == nil
                             and #ast[1] == 1 and #ast[2] == 1
                             and ast[1][1].tag == 'Id' and ast[2][1].tag == 'Function')
+  -- But fir
   if ast[1].tag == nil then
-    -- This is the "function foo() .. end" case.
+    -- This is the "function foo() .. end" case. Assign the Function to global var 'foo'
     assert(ast[2][1].tag == 'Function')
     lua2ps(ast[2][1], locals)
     -- Emit PostScript to make the assignment
     ps:emitGlobalAssignment(ast[1][1][1])
   else
-    -- To keep things simple, we'll impose some additional
-    -- restrictions on ourselves. Better code in the future
-    -- can remove these restrictions.
-    assert(#ast[1] == #ast[2])
-    -- Lua evaluates all rvalues first, so we'll do the same.
-    -- This will push the results of each rvalue to the stack
-    -- left-to-right, so the right-most rvalue is on the top
-    -- of the stack.
-    for _, child in ipairs(ast[2]) do
-      lua2ps(child, locals)
+    -- First we'll evaluate all of our rvalues, imposing the "comma rule," in
+    -- right-to-left order. We'll push nil (null) or roll the rightmost values
+    -- to the top of the stack and pop them off, to balance out #ast[1] with
+    -- #ast[2].
+    for i = #ast[2], 1, -1 do
+      -- If the rightmost rvalue expression is a call, then the function call will give
+      -- us *exactly* the number of return values we want, popping or padding with nil
+      -- as necessary. But, if it is not a call, then *we* are responsible for padding
+      -- with nil (null.)
+      if i == #ast[2] then
+        if ast[2][i].tag == 'Call' then
+          lua2ps(ast[2][i], locals, math.max(0, #ast[1] - #ast[2]))
+        else
+          -- We're responsible for padding out our rvalue list with nil.
+          for j = 1, #ast[1] - #ast[2] do
+            ps:emit('null', '% padding rvalue list for assignment statement')
+          end
+          -- Now evaluate the non-Call rvalue expression
+          lua2ps(ast[2][i], locals)
+        end
+      else
+        -- It's harmless to request numReturnValues if it's not a call, so this is simple
+        -- enough.
+        lua2ps(ast[2][i], locals, 1)
+      end
     end
-    -- Now we will assign these values to our variables. We
-    -- must do this in right-to-left order because we evaluated
-    -- our rvalues left-to-right.
-    for iChild = #ast[1], 1, -1 do
-      local child = ast[1][iChild]
+
+    -- Now that we have our rvalue list, let's get these values into our lvalues. As we
+    -- pushed our rvalues in right-to-left order, we'll be assigning in left-to-right
+    -- order.
+    for i = 1, #ast[2] do
+      local child = ast[1][i]
       if child.tag == 'Index' then
         -- This is a table index assignment. The lvalue can be a pretty complicated
         -- expression, such as foo[23][42] = value, and more exotic forms. The Index

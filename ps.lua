@@ -25,7 +25,7 @@ function PS:new(out)
     , exch          = { pop = 2 , push = 2 }
     , eq            = { pop = 2 , push = 1 }
     , lt            = { pop = 2 , push = 1 }
-    , exec          = { pop = 0 , push = 0 } -- TODO this is bs
+    , exec          = { pop = 1 , push = 0 } -- TODO this is bs
     , exit          = { pop = 0 , push = 0 } -- wat
     , ['true']      = { pop = 0 , push = 1 }
     , ['false']     = { pop = 0 , push = 1 }
@@ -178,8 +178,9 @@ function PS:emit(...)
         -- Check for stack underflow
         local cmd = self.psCommands[a]
         if self:getStackDepth() < cmd.pop then
-          trace(string.format('error emitting "%s" PostScript command', a))
-          error('PostScript stack underflow')
+          error(string.format(
+            'error emitting "%s" PostScript command: PostScript stack underflow (depth=%d pop=%d)'
+          , a, self:getStackDepth(), cmd.pop))
         end
 
         -- Emit the PostScript command
@@ -266,10 +267,14 @@ function PS:doFunction(numArgs, pos, fn)
     -- some by using PostScript's "mark" to delineate stack frames. Our function
     -- introduction code uses these marks to count arguments, and sets their values
     -- to nil, for which we use the PostScript value 'null'.
-    self:write(string.format('counttomark %d sub 1 0 { pop null } for %% function pos=%d\n', 
-      numArgs - 1
-    , pos
-    ))
+    if numArgs == 0 then
+      self:write('% zero explicit arguments\n')
+    else
+      self:write(string.format('{ counttomark %d ge { exit } if null } loop %% function pos=%d\n', 
+        numArgs
+      , pos
+      ))
+    end
 
     -- Record our new stack depth. Our caller should count current locals, which
     -- should only be function arguments at this point, from zero.
@@ -290,17 +295,30 @@ end
 function PS:emitFunctionReturn(numReturns, pos)
   --
   if pos == nil then pos = -1 end
-  -- Right now we only support exactly one return value! TODO
-  assert(numReturns == 1)
-  -- We're going to use the PostScript 'mark' feature to unwind our stack frame.
-  -- But we must first roll our return values under the mark. Bypass the emitter
-  -- which doesn't know how to deal with this.
-  self:write(string.format('counttomark 1 add 1 roll cleartomark exit %% return pos=%d\n', pos))
-  -- ..but we do have to do our own stack bookkeeping. The serial nature of the
-  -- PostScript proc requires us to pop our return value here, otherwise at
-  -- the end of our block, which should be right now, we'll still have one thing
-  -- on the stack, according to self.stackDepth.
-  self:nudgeStackDepth(-1)
+  -- Ensure numReturns is sane
+  -- TODO Figure out how best to get information about unbound return value lists
+  -- here so that we can make the sanity check properly,.. or something, idk
+  assert(0 <= numReturns) -- XXX and numReturns <= self:getStackDepth())
+  if numReturns == 0 then
+    self:write('cleartomark mark exit % return nothing\n')
+  else
+    -- We're going to reuse the PostScript mark that was used to set up our call
+    -- frame to delineate our return frame. So we'll roll our return values under
+    -- our call stack, but over the mark, and then pop the return values.
+    self:write(string.format(
+      'counttomark %d roll counttomark %d sub -1 1 { pop pop } for exit %% return %d values pos=%d\n'
+    , numReturns
+    , numReturns
+    , numReturns
+    , pos
+    ))
+    -- As the stock stack bookkeeper for PS doesn't know how to deal with varargs,
+    -- we'll have to do our own stack bookkeeping here. The serial nature of the
+    -- PostScript proc requires us to pop our return value here, otherwise at
+    -- the end of our block, which should be right now, it will think we still have
+    -- our return values on the stack.
+    self:nudgeStackDepth(-numReturns)
+  end
 end
 
 function PS:emitGlobalFunctionCall(id, numArgs, evalArg)
@@ -452,6 +470,11 @@ function PS:emitString(s)
 end
 
 function PS:close()
+  -- One last check of stack sanity
+  if self:getStackDepth() ~= 0 then
+    error(string.format('Lua script mismanged PostScript operand stack by %d operands',
+      self.stackDepth[#self.stackDepth]))
+  end
   trace('PS:close()')
   self:write('count 0 ne { (Non-empty stack at exit:) == pstack } if quit\n')
   if self.out ~= io.stdout then self.out:close() end
