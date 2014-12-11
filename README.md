@@ -8,7 +8,7 @@ lua2ps
 
 `lua2ps` parses and consumes [Lua](http://www.lua.org/) 5.1 source code and produces its equivalent in [PostScript](http://www.adobe.com/products/postscript/).
 
-It is very nearly capable of running 
+It is very nearly capable of running [luaqrcode](https://github.com/speedata/luaqrcode).
 
 ## Why create such a thing?
 
