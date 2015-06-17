@@ -4,7 +4,7 @@ export LUA_CPATH='/mnt/oih/hdon/src/hg/lua2ps/lpeg/?.so'
 export LUA_PATH='/mnt/oih/hdon/src/hg/lua2ps/?.lua;/mnt/oih/hdon/src/hg/lua2ps/lua-parser/?.lua'
 
 if [ $# = 0 ] ; then
-  TESTS=tests/*
+  TESTS=tests/*.lua
 else
   TESTS=$@
 fi
@@ -13,6 +13,8 @@ fi
 rm -f $TEMPDIR/lua2ps*
 
 # Run test procedure for each test
+NUMPASSED=0
+NUMFAILED=0
 for testscript in $TESTS ; do
   TESTNAME=`basename $testscript`
 
@@ -70,6 +72,32 @@ for testscript in $TESTS ; do
   fi
   if [ $PASSED = n ] ; then
     echo [1\;41mTest failed![0m
+    NUMFAILED=$((NUMFAILED + 1))
+  else
+    NUMPASSED=$((NUMPASSED + 1))
   fi
-
+  if [ -n "$SAVE_TEST_RESULTS" ] ; then
+    echo -n $PASSED > "$testscript.passing.2"
+  fi
 done
+
+echo Summary:
+echo $NUMPASSED passed / $NUMFAILED failed
+if [ -n "$SAVE_TEST_RESULTS" ] ; then
+  for testscript in $TESTS ; do
+    echo -n "$testscript "
+    if [ -a "$testscript.passing" ] ; then
+      R=$(cat "$testscript.passing")
+      [ "$R" = y ] && echo -n [1\;32my[0m || echo -n [1\;41mn[0m
+    else
+      echo -n '-'
+    fi
+    echo -n ' '
+    R=$(cat "$testscript.passing.2")
+    [ "$R" = y ] && echo -n [1\;32my[0m || echo -n [1\;41mn[0m
+    echo
+    if [ -n "$OVERWRITE_TEST_RESULTS" ] ; then
+      mv "$testscript.passing.2" "$testscript.passing"
+    fi
+  done
+fi
