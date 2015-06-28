@@ -1,0 +1,3 @@
+/tests/*.passing.2
+.*.sw*
+_ast.lua
