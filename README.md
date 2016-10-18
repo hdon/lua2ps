@@ -21,6 +21,10 @@ I hadn't had much experience with the Lua programming language, and zero experie
  * Andre Murbach Maidl's [lua-parser](https://github.com/andremm/lua-parser.git)
  * Craig Barnes' [lpeg](https://github.com/lua/lpeg)
 
+To get lua-parser and lpeg with luarocks (preferred) simply use:
+
+`luarocks install --local lua-parser`
+
 ## How do I use it?
 
 Well, you probably don't want to. I can't imagine any reason why anyone would want to write Lua code and have it interpreted by a PostScript interpreter. Perhaps you'd like to create PostScript documents using a newer programming language with infix notation; modularity; functional and object-oriented programming; closure scopes; dynamic arrays, hash tables, and strings as primitive types; first-class functions; variadic argument lists, and other popular and elegant features. It is [not without its flaws](http://stackoverflow.com/questions/2785704/why-do-lua-arraystables-start-at-1-instead-of-0) but it isn't bad.

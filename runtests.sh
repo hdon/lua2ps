@@ -1,7 +1,6 @@
 #!/bin/bash
 TEMPDIR=/tmp
-export LUA_CPATH='/mnt/oih/hdon/src/hg/lua2ps/lpeg/?.so'
-export LUA_PATH='/mnt/oih/hdon/src/hg/lua2ps/?.lua;/mnt/oih/hdon/src/hg/lua2ps/lua-parser/?.lua'
+eval `luarocks path`
 
 if [ $# = 0 ] ; then
   TESTS=tests/*.lua
